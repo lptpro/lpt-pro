@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=LPT Pro
+GenericName=Local Photo Transfer
+Comment=Copy photos and videos from your iPhone to this computer
+Exec=lpt-pro
+Icon=io.github.lptpro.LPTPro
+Terminal=false
+Categories=Graphics;Photography;
+Keywords=iPhone;photos;videos;backup;transfer;copy;HEIC;
+StartupWMClass=LPTPro

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.lptpro.LPTPro</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>LPT Pro</name>
+  <summary>Copy photos and videos from your iPhone to this computer</summary>
+  <developer id="io.github.lptpro">
+    <name>LPT Pro contributors</name>
+  </developer>
+  <description>
+    <p>
+      LPT Pro (Local Photo Transfer) shows everything on your iPhone and tells you exactly
+      what is already backed up on your computer. Back up what is missing with one button.
+    </p>
+    <ul>
+      <li>Every copy is verified before it counts</li>
+      <li>Sorted into folders by the date each photo was taken, original dates kept</li>
+      <li>Optionally saves HEIC photos as JPEG</li>
+      <li>Built-in photo viewer and video player</li>
+      <li>Honest about photos whose original is only in iCloud</li>
+      <li>Never changes or deletes anything on the iPhone, and never uses the internet</li>
+    </ul>
+    <p>Needs the usbmuxd service and a USB cable. No Apple account or iTunes is needed.</p>
+  </description>
+  <launchable type="desktop-id">io.github.lptpro.LPTPro.desktop</launchable>
+  <url type="homepage">https://github.com/lptpro/lpt-pro</url>
+  <url type="bugtracker">https://github.com/lptpro/lpt-pro/issues</url>
+  <categories>
+    <category>Graphics</category>
+    <category>Photography</category>
+  </categories>
+  <screenshots>
+    <screenshot type="default">
+      <caption>See what is backed up and copy what is missing</caption>
+      <image>https://raw.githubusercontent.com/lptpro/lpt-pro/main/docs/screenshot-main.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.16.0" date="2026-11-12">
+      <description><p>First public test release.</p></description>
+    </release>
+  </releases>
+</component>
