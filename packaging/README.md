@@ -5,6 +5,7 @@ The finished files appear under **Actions → the latest run → Artifacts**.
 
 | Output | Built by | Goes to |
 |---|---|---|
+| `LPT-Pro-<version>-Windows-Test.zip` (installer `.exe` + read-me) | `packaging/windows/lptpro.iss` (Inno Setup) | GitHub Releases, friends and testers |
 | `LPTPro_<version>_x64.msix` | `packaging/windows/build_msix.ps1` | Microsoft Store (upload in Partner Center) |
 | `lpt-pro_<version>_amd64.deb` | `packaging/linux/build_deb.sh` | GitHub Releases |
 
@@ -50,6 +51,13 @@ The `.deb` already contains the menu entry and the AppStream description
 Software / Discover, the next step is a Flathub submission (free). It needs:
 - a Flatpak manifest built on the PySide6 base app;
 - access to the host's `usbmuxd` socket.
+
+## Building the Windows installer on your own PC
+
+Double-click `packaging\windows\build_installer.bat`. It sets up what it needs (PyInstaller
+in a private build environment, Inno Setup via winget) and leaves
+`dist\LPT-Pro-<version>-Windows-Test.zip`, ready to send. The installer is unsigned, so on
+a PC with Smart App Control turned on, Windows won't run it. Test it on another PC.
 
 ## Building locally
 

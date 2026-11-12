@@ -44,6 +44,14 @@ everything is in place.
 
 - **Microsoft Store** (recommended, coming soon): install it like any other app. Store
   apps are checked and signed by Microsoft, so Windows trusts them.
+- **Installer** (test versions): download `LPT-Pro-<version>-Windows-Test.zip` from the
+  [Releases](../../releases) page, unzip it and run `LPT-Pro-Setup-<version>.exe`.
+  - Python is built in; nothing else to install except Apple Devices, which the installer
+    checks for and helps with.
+  - Test versions aren't signed yet, so Windows shows "Windows protected your PC": click
+    *More info → Run anyway*.
+  - On PCs with **Smart App Control** turned on, Windows blocks unsigned test versions
+    completely. Use the Store version there.
 - **From source** (for testers): download the source code (green **Code** button →
   *Download ZIP*), unzip it, and double-click **`run_windows.bat`**.
   - If Python isn't installed, it offers to install it for you, using the official

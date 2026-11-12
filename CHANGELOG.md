@@ -8,3 +8,4 @@
 - Honest handling of photos that are only in iCloud.
 - Plain-language Problems list; "Done!" card when a backup finishes.
 - First-time setup help for Windows (Apple Devices) and Linux (usbmuxd).
+- Windows installer for testers: checks for Apple's USB service and links to Apple Devices.

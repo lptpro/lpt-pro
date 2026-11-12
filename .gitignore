@@ -8,3 +8,4 @@ dist/
 *.deb
 *.zip
 .flatpak-builder/
+.venv-build/

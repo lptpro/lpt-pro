@@ -1,0 +1,23 @@
+LPT Pro - test version for Windows 10 / 11
+==========================================
+
+1. Double-click "LPT-Pro-Setup-<version>.exe" and follow the steps.
+
+2. Windows may warn you, because this test version isn't signed yet
+   (signing comes with the Microsoft Store release):
+
+   - "Windows protected your PC" (blue box): click "More info", then "Run anyway".
+   - "Smart App Control blocked an app": on PCs where Smart App Control is turned on,
+     Windows doesn't allow test versions at all and there is no button to allow it.
+     Please wait for the Microsoft Store version, or ask for a Store test invite.
+
+3. The installer checks whether Apple's iPhone USB service is there. If not, it shows a
+   button that opens the free "Apple Devices" app in the Microsoft Store.
+   iTunes is NOT required and not recommended.
+
+4. Start LPT Pro, plug in your iPhone, unlock it and tap "Trust".
+
+LPT Pro only reads from the iPhone. It never changes or deletes anything on it,
+and it never sends anything over the internet.
+
+To remove it: Settings > Apps > Installed apps > LPT Pro > Uninstall.

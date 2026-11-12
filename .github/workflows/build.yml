@@ -1,4 +1,4 @@
-# Builds LPT Pro for Windows (Store package) and Linux (.deb) on every push.
+# Builds LPT Pro for Windows (installer + Store package) and Linux (.deb) on every push.
 # Pushing a tag like v0.16.0 also creates a GitHub Release with the files attached.
 name: Build
 
@@ -44,6 +44,22 @@ jobs:
         with:
           name: windows-store-package
           path: out/*.msix
+      - name: Installer (.exe) and test zip
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          $ver = python -c "import lptpro; print(lptpro.__version__)"
+          & $iscc /Q "/DAppVersion=$ver" "/DDistDir=..\..\dist\LPTPro" packaging\windows\lptpro.iss
+          if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
+          $zipdir = "dist\LPT-Pro-$ver-Windows-Test"
+          New-Item -ItemType Directory $zipdir -Force | Out-Null
+          Copy-Item "dist\LPT-Pro-Setup-$ver.exe", "packaging\windows\READ ME FIRST.txt" $zipdir
+          Compress-Archive -Force -Path "$zipdir\*" -DestinationPath "out\LPT-Pro-$ver-Windows-Test.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: out/*.zip
 
   linux:
     runs-on: ubuntu-22.04        # oldest supported base: works on Ubuntu 22.04+ / Mint 21+ / Debian 12+
@@ -88,5 +104,7 @@ jobs:
           path: artifacts
       - uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/linux-deb/*.deb
+          files: |
+            artifacts/linux-deb/*.deb
+            artifacts/windows-installer/*.zip
           generate_release_notes: true
