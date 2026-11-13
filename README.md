@@ -10,6 +10,8 @@ Free and open source, for Windows and Linux.</p>
   <a href="https://github.com/lptpro/lpt-pro/releases/latest/download/LPT-Pro-Linux.deb"><b>⬇ Download for Linux</b></a>
 </p>
 
+<p align="center"><img src="docs/screenshot-main.png" width="900" alt="LPT Pro showing the photos on an iPhone, which ones are already on the PC, and the Back up what's missing button"></p>
+
 ---
 
 ## What it does
