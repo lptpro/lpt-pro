@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.16.1
+- New app icon.
+
 ## 0.16.0 – first public test release
 - Copy photos and videos from an iPhone to a PC, verified, sorted by year and month.
 - Backup check by file content; "Back up what's missing" with one button.

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """LPT Pro – Local Photo Transfer: copy photos and videos from an iPhone to a PC."""
 
-__version__ = "0.16.0"
+__version__ = "0.16.1"
 APP_NAME = "LPT Pro"
 APP_LONG_NAME = "LPT Pro – Local Photo Transfer"
 APP_ID = "io.github.lptpro.LPTPro"
