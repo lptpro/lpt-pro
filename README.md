@@ -4,6 +4,12 @@
 <p align="center"><b>Local Photo Transfer</b> – copy the photos and videos from your iPhone to your PC.<br>
 Free and open source, for Windows and Linux.</p>
 
+<p align="center">
+  <a href="https://github.com/lptpro/lpt-pro/releases/latest/download/LPT-Pro-Windows.zip"><b>⬇ Download for Windows</b></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://github.com/lptpro/lpt-pro/releases/latest/download/LPT-Pro-Linux.deb"><b>⬇ Download for Linux</b></a>
+</p>
+
 ---
 
 ## What it does
@@ -44,8 +50,8 @@ everything is in place.
 
 - **Microsoft Store** (recommended, coming soon): install it like any other app. Store
   apps are checked and signed by Microsoft, so Windows trusts them.
-- **Installer** (test versions): download `LPT-Pro-<version>-Windows-Test.zip` from the
-  [Releases](../../releases) page, unzip it and run `LPT-Pro-Setup-<version>.exe`.
+- **Installer** (test versions): click **Download for Windows** at the top of this page, unzip it and run
+  `LPT-Pro-Setup-<version>.exe`.
   - Python is built in; nothing else to install except Apple Devices, which the installer
     checks for and helps with.
   - Test versions aren't signed yet, so Windows shows "Windows protected your PC": click
@@ -63,10 +69,10 @@ everything is in place.
 
 ### Linux (Ubuntu, Linux Mint, Debian, …)
 
-- **.deb package**: download `lpt-pro_<version>_amd64.deb` from the
-  [Releases](../../releases) page, then run:
+- **Installer**: click **Download for Linux** at the top of this page, then run this in the
+  folder where it was saved (usually Downloads):
   ```
-  sudo apt install ./lpt-pro_*_amd64.deb
+  sudo apt install ./LPT-Pro-Linux.deb
   ```
   This also installs usbmuxd. LPT Pro then appears in your app menu.
 - **Flathub** (coming soon): it will show up in Software Manager / GNOME Software / Discover.

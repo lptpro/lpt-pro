@@ -102,9 +102,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: Fixed file names (so the download buttons always get the newest version)
+        run: |
+          mkdir upload
+          cp artifacts/windows-installer/*.zip upload/LPT-Pro-Windows.zip
+          cp artifacts/linux-deb/*.deb upload/LPT-Pro-Linux.deb
       - uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/linux-deb/*.deb
-            artifacts/windows-installer/*.zip
+          files: upload/*
           generate_release_notes: true
