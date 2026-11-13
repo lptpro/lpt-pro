@@ -34,6 +34,8 @@ OutputBaseFilename=LPT-Pro-Setup-{#AppVersion}
 Compression=lzma2/normal
 SolidCompression=yes
 CloseApplications=yes
+; tell Windows to refresh its icon cache after installing (so a new app icon shows at once)
+ChangesAssociations=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

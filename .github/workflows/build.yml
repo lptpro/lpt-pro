@@ -111,3 +111,5 @@ jobs:
         with:
           files: upload/*
           generate_release_notes: true
+          prerelease: false      # always a normal release...
+          make_latest: true      # ...marked "Latest", so the download buttons get it
