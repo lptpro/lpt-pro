@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 
 from . import APP_LONG_NAME, APP_NAME, __version__, settings
 from .backup_index import BackupIndex
-from .jobs import AuditWorker, BackupWatcher, CaptureDateReader, ConnectAndScan, CopyWorker, ThumbLoader
+from .jobs import (AuditWorker, BackupWatcher, CaptureDateReader, ConnectAndScan, CopyWorker,
+                   RecentlyDeletedReader, ThumbLoader)
 from . import heic
 from .preview import PreviewWindow, clock
 from .videothumbs import VideoThumbnailer
@@ -70,6 +71,7 @@ class GridModel(QAbstractListModel):
         self.requested: set[str] = set()
         self.only_missing = False
         self.hide_live = False
+        self.hide_deleted = False
         self.month = 0      # 0 = all months
         self.year = 0       # 0 = all years
         self.kind = "all"
@@ -87,6 +89,8 @@ class GridModel(QAbstractListModel):
         if self.only_missing and it.backed_up is True:
             return False
         if self.hide_live and it.extra.get("live"):
+            return False
+        if self.hide_deleted and it.extra.get("trashed"):
             return False
         if self.year and it.date.year != self.year:
             return False
@@ -245,7 +249,11 @@ class TileDelegate(QStyledItemDelegate):
             self._badge(p, box, ("LIVE · " + label) if it.extra.get("live") else label, right=True)
         p.setOpacity(1.0)
 
-        if it.backed_up is True:
+        if it.extra.get("trashed"):
+            # in the iPhone's Recently Deleted album (shown only when not hidden)
+            self._tag(p, box, "DELETED · ON PC" if it.backed_up is True else "DELETED",
+                      QColor("#3a1616"), QColor("#ff9b9b"))
+        elif it.backed_up is True:
             self._tag(p, box, "ON PC · JPEG" if it.extra.get("as_jpeg") else "ON PC",
                       QColor("#0e2b1d"), QColor("#8fe0b5"))
         elif it.extra.get("cloud"):
@@ -882,6 +890,14 @@ class MainWindow(QMainWindow):
         self.hide_live.setChecked(self.settings.value("hide_live", False, type=bool))
         self.hide_live.toggled.connect(lambda v: (self.settings.setValue("hide_live", v), self.on_filter()))
         fh.addWidget(self.hide_live)
+        fh.addSpacing(12)
+        self.hide_deleted = QCheckBox("Hide Recently Deleted")
+        self.hide_deleted.setToolTip("Photos and videos you deleted on the iPhone stay in its \u201cRecently Deleted\u201d\n"
+                                     "album for about 30 days. They're hidden here while this is ticked.")
+        self.hide_deleted.setChecked(self.settings.value("hide_deleted", True, type=bool))
+        self.hide_deleted.toggled.connect(lambda v: (self.settings.setValue("hide_deleted", v), self.on_filter()))
+        self.hide_deleted.hide()                 # shown once the iPhone says some are there
+        fh.addWidget(self.hide_deleted)
         fh.addStretch(1)
         fh.addWidget(QLabel("Size", objectName="muted"))
         self.size_slider = QSlider(Qt.Horizontal)
@@ -967,19 +983,25 @@ class MainWindow(QMainWindow):
         self.opt_dates = QCheckBox("Set file dates from capture date")
         self.opt_pairs = QCheckBox("Keep Live Photo pairs together")
         self.opt_skip = QCheckBox("Skip items already backed up")
+        self.opt_skip_deleted = QCheckBox("Skip Recently Deleted")
+        self.opt_skip_deleted.setToolTip("\u201cBack up what\u2019s missing\u201d leaves out photos and videos that are in the\n"
+                                         "iPhone's Recently Deleted album. Items you select yourself are always copied.")
         self.opt_aae = QCheckBox("Include edit files (.AAE)")
         self.opt_jpeg = QCheckBox("Save HEIC photos as JPEG")
         self.opt_keep_heic = QCheckBox("   …and keep the original HEIC too")
         self.opt_keep_heic.setToolTip("The JPEG is for everyday use. The HEIC is the untouched original "
                                       "from the phone (full quality, HDR, depth).")
         for cb, key, default in ((self.opt_dates, "opt_dates", True), (self.opt_pairs, "opt_pairs", True),
-                                 (self.opt_skip, "opt_skip", True), (self.opt_aae, "opt_aae", False),
+                                 (self.opt_skip, "opt_skip", True), (self.opt_skip_deleted, "opt_skip_deleted", True),
+                                 (self.opt_aae, "opt_aae", False),
                                  (self.opt_jpeg, "opt_jpeg", True), (self.opt_keep_heic, "opt_keep_heic", False)):
             cb.setChecked(self.settings.value(key, default, type=bool))
             cb.toggled.connect(lambda val, k=key: self.settings.setValue(k, val))
             pv.addWidget(cb)
         self.opt_keep_heic.setEnabled(self.opt_jpeg.isChecked())
         self.opt_jpeg.toggled.connect(self.opt_keep_heic.setEnabled)
+        self.opt_skip_deleted.toggled.connect(
+            lambda *_: self.update_audit_summary(final=not (self.audit_worker and self.audit_worker.isRunning())))
 
         self.copy_btn = QPushButton("Select items to copy", objectName="primary")
         self.copy_btn.setMinimumHeight(44)
@@ -1021,6 +1043,7 @@ class MainWindow(QMainWindow):
                                     "match reality (the iPhone's own file dates can be much later).")
         self.dates_label.hide()
         self.dates_reader = None
+        self.deleted_reader = None
         self._pv_tick = QTimer(self, interval=500)     # keep the count fresh while loading
         self._pv_tick.timeout.connect(lambda: self._render_pv())
         self._pv_hide = QTimer(self, singleShot=True, interval=4000)
@@ -1239,6 +1262,7 @@ class MainWindow(QMainWindow):
         self.start_audit()
         self._start_prefetch(items)
         self._start_dates(items)
+        self._start_deleted()
 
     # -- audit ----------------------------------------------------------------
     def make_index(self):
@@ -1286,8 +1310,12 @@ class MainWindow(QMainWindow):
         if self.only_missing.isChecked():
             self.rebuild_grid()
 
+    def _skips_deleted(self, it) -> bool:
+        return bool(it.extra.get("trashed")) and it.backed_up is not True and self.opt_skip_deleted.isChecked()
+
     def update_audit_summary(self, final=False):
-        items = self.model.items
+        trashed = [i for i in self.model.items if self._skips_deleted(i)]
+        items = [i for i in self.model.items if not self._skips_deleted(i)]
         done = sum(1 for i in items if i.backed_up is True)
         cloud = [i for i in items if i.backed_up is not True and i.extra.get("cloud")]
         missing = [i for i in items if i.backed_up is False and not i.extra.get("cloud")]
@@ -1295,15 +1323,19 @@ class MainWindow(QMainWindow):
         self.audit_bar.setMaximum(max(1, len(items)))
         self.audit_bar.setValue(done)
         if final or checked == len(items):
+            except_ = [f"{len(cloud):,} only in iCloud"] if cloud else []
+            if trashed:
+                except_.append(f"{len(trashed):,} in Recently Deleted")
             if missing:
                 self.audit_title.setText(f"{len(missing):,} items are not backed up yet")
-            elif cloud:
-                self.audit_title.setText(f"Everything on this iPhone is backed up ✓ "
-                                         f"(except {len(cloud):,} only in iCloud)")
+            elif except_:
+                self.audit_title.setText("Everything on this iPhone is backed up ✓ "
+                                         f"(except {' and '.join(except_)})")
             else:
                 self.audit_title.setText("Everything on this iPhone is backed up ✓")
             self.audit_text.setText(f"{done:,} backed up · {len(missing):,} not backed up"
                                     + (f" · {len(cloud):,} only in iCloud (not on this iPhone)" if cloud else "")
+                                    + (f" · {len(trashed):,} in Recently Deleted (skipped)" if trashed else "")
                                     + " · matched by content, so renamed or re-sorted files still count")
         # Usable while the check is still running: the copy re-checks every item against the
         # backup folder right before copying it and skips what's already there.
@@ -1330,6 +1362,7 @@ class MainWindow(QMainWindow):
         self.model.kind = b.property("kind") if b else "all"
         self.model.only_missing = self.only_missing.isChecked()
         self.model.hide_live = self.hide_live.isChecked()
+        self.model.hide_deleted = self.hide_deleted.isChecked()
         self.model.month = self.month_box.currentData() or 0
         self.model.year = self.year_box.currentData() or 0
         self.hide_live.setVisible(self.model.kind != "photo")
@@ -1359,6 +1392,39 @@ class MainWindow(QMainWindow):
             self.vthumbs.request(it)
         else:
             self.vthumbs.add_prefetch(it)
+
+    # -- Recently Deleted -------------------------------------------------------------
+    def _start_deleted(self):
+        if self.deleted_reader is not None:
+            try:
+                self.deleted_reader.done.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        r = RecentlyDeletedReader(self.device)
+        r.done.connect(self._on_deleted)
+        self.deleted_reader = r
+        r.start()
+
+    def _on_deleted(self, paths, reason):
+        if self.sender() is not self.deleted_reader:
+            return                                   # from an earlier connection
+        for it in self.model.items:
+            it.extra.pop("trashed", None)
+        if paths is None:
+            note = (f"Couldn\u2019t read the iPhone\u2019s Recently Deleted list ({reason}), "
+                    "so nothing is treated as deleted.")
+            self.opt_skip_deleted.setToolTip(note)
+            self.hide_deleted.hide()
+        else:
+            for it in self.model.items:
+                photo = it.extra.get("live_photo")   # a Live Photo's video goes with its photo
+                if it.path.upper() in paths or (photo and photo.upper() in paths):
+                    it.extra["trashed"] = True
+        n = sum(1 for i in self.model.items if i.extra.get("trashed"))
+        self.hide_deleted.setText(f"Hide Recently Deleted ({n:,})")
+        self.hide_deleted.setVisible(n > 0)
+        self.on_filter()
+        self.update_audit_summary(final=not (self.audit_worker and self.audit_worker.isRunning()))
 
     # -- dates taken ---------------------------------------------------------------
     def _start_dates(self, items):
@@ -1566,7 +1632,8 @@ class MainWindow(QMainWindow):
     def backup_missing(self):
         # everything not yet confirmed as on the PC (including items the check hasn't reached:
         # the copy skips any that turn out to be backed up already)
-        todo = [i.path for i in self.model.items if i.backed_up is not True and not i.extra.get("cloud")]
+        todo = [i.path for i in self.model.items if i.backed_up is not True and not i.extra.get("cloud")
+                and not self._skips_deleted(i)]
         if todo:
             self.start_copy(todo, self.backup_root, force_skip=True)
 
@@ -1766,6 +1833,11 @@ class MainWindow(QMainWindow):
 
     def _stop_phone_work(self):
         self.vthumbs.stop()
+        if self.deleted_reader is not None:
+            try:
+                self.deleted_reader.done.disconnect()
+            except (RuntimeError, TypeError):
+                pass
         if self.dates_reader and self.dates_reader.isRunning():
             self.dates_reader.cancel()
         self.thumbs.pause_prefetch(True)

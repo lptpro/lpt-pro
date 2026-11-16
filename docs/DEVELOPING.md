@@ -38,6 +38,7 @@ python -m lptpro --demo /path/to/folder          # a folder with DCIM/100APPLE/.
 | `lptpro/__init__.py` | version, names, settings, migration from test builds |
 | `lptpro/__main__.py` | start-up, logging, video engine and GPU options, `--check` |
 | `lptpro/device.py` | `AfcBackend` (real iPhone through pymobiledevice3, own asyncio loop thread, sync API) and `FolderBackend` (demo). Read-only API: `listdir`, `stat`, `stat_many`, `open`, `read`, `pread`, `close_file`, `read_all`, `head_hash` |
+| `lptpro/photosdb.py` | read-only reader for the iPhone's Photos library (SQLite + its WAL, fetched in a few large reads) → which items are in Recently Deleted (`ZASSET.ZTRASHEDSTATE`) |
 | `lptpro/setup_check.py` | first-time checks: Apple Mobile Device Service (Windows), usbmuxd (Linux) |
 | `lptpro/media.py` | `MediaItem`, phone scan, capture dates (EXIF, QuickTime), Live Photo pairing, folder templates, file times |
 | `lptpro/backup_index.py` | "is it backed up?" by size + first-64-KB hash; fingerprint cache; record of JPEG-only copies (`<backup>/.lptpro/converted.json`) |

@@ -38,6 +38,9 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.17.0" date="2026-11-15">
+      <description><p>Recognises the iPhone's Recently Deleted album: hidden and skipped by default.</p></description>
+    </release>
     <release version="0.16.1" date="2026-11-13">
       <description><p>New app icon.</p></description>
     </release>

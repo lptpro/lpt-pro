@@ -594,6 +594,30 @@ class BackupWatcher(QThread):
             self.results.emit(out)
 
 
+class RecentlyDeletedReader(QThread):
+    """Reads which items are in the iPhone's "Recently Deleted" album (from the phone's
+    Photos library, read-only). Emits done(set of upper-case phone paths, "") or
+    done(None, plain reason) when the list can't be read."""
+
+    done = Signal(object, str)
+
+    def __init__(self, device):
+        super().__init__()
+        self.device = device
+
+    def run(self):
+        background_priority()
+        from .photosdb import Unavailable, recently_deleted
+        try:
+            self.done.emit(recently_deleted(self.device), "")
+        except Unavailable as e:
+            log.info("Recently Deleted list not available: %s", e)
+            self.done.emit(None, str(e))
+        except Exception as e:
+            log.warning("Recently Deleted list failed", exc_info=True)
+            self.done.emit(None, f"couldn't be read ({type(e).__name__})")
+
+
 class CaptureDateReader(QThread):
     """Reads the date each photo/video was TAKEN (from its own metadata) so the grid, the
     days and the Year list match reality. The iPhone's file date can be much later: for

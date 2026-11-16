@@ -24,6 +24,8 @@ Free and open source, for Windows and Linux.</p>
   and reported, never kept half-copied.
 - Keeps the original dates and photo details. HEIC photos can be saved as JPEG.
 - Plays videos and opens photos full size, straight from the phone.
+- Recognises photos in the iPhone's **Recently Deleted** album and leaves them out by
+  default, so a pile of deleted screenshots doesn't get backed up.
 - Is honest about photos whose full-size original is **only in iCloud** (the iPhone
   setting "Optimize iPhone Storage"), so you never think something is backed up when it isn't.
 

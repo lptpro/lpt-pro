@@ -181,6 +181,14 @@ def check(demo=None):
     photos = sum(1 for i in items if i.kind == "photo")
     print(f"Found {len(items):,} items ({photos:,} photos, {len(items) - photos:,} videos) in {time.time() - t:.1f}s")
     print(f"Only in iCloud (originals not on the iPhone): {n_cloud:,}")
+    from .photosdb import Unavailable, recently_deleted
+    try:
+        t = time.time()
+        gone = recently_deleted(dev)
+        n_gone = sum(1 for i in items if i.path.upper() in gone)
+        print(f"In Recently Deleted: {n_gone:,} (read from the iPhone's Photos library in {time.time() - t:.1f}s)")
+    except Unavailable as e:
+        print(f"Recently Deleted: not available - {e}")
     if items:
         it = items[0]
         print(f"Newest: {it.name}  {it.date:%Y-%m-%d %H:%M}  {it.size:,} bytes")

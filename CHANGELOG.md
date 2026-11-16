@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0
+- Photos and videos in the iPhone's Recently Deleted album are recognised (read from the
+  iPhone's Photos library, read-only).
+- "Hide Recently Deleted" (on by default) keeps them out of the grid; a red DELETED tag
+  marks them when shown.
+- "Skip Recently Deleted" (on by default) leaves them out of "Back up what's missing" and
+  the counts. Items you select yourself are always copied.
+
 ## 0.16.1
 - New app icon.
 
