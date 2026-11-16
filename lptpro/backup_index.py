@@ -25,6 +25,17 @@ from .media import MEDIA_EXT
 log = logging.getLogger("transfer")
 
 
+def hide_folder(path: str) -> None:
+    """Windows: mark one of LPT Pro's own bookkeeping folders as hidden (other systems
+    already hide names starting with a dot)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetFileAttributesW(str(path), 0x2)
+        except Exception:
+            pass
+
+
 def local_head_hash(path: str, size: int) -> bytes:
     with open(path, "rb") as f:
         return hashlib.sha1(f.read(min(HASH_HEAD, size))).digest()
@@ -155,6 +166,7 @@ class BackupIndex:
             path = self._ledger_path(root)
             try:
                 os.makedirs(os.path.dirname(path), exist_ok=True)
+                hide_folder(os.path.dirname(path))
                 with open(path + ".tmp", "w", encoding="utf-8") as f:
                     json.dump(mine, f, indent=0)
                 os.replace(path + ".tmp", path)

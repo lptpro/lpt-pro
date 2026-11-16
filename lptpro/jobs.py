@@ -14,6 +14,7 @@ import time
 from PySide6.QtCore import QThread, Signal
 
 from . import _OLD_TEMP_DIR_NAME, TEMP_DIR_NAME
+from .backup_index import hide_folder
 from .device import DeviceError, DeviceGone, is_no_resources, is_not_on_phone
 from . import heic
 from .media import TEMPLATES, MediaItem, capture_date, capture_date_f, scan_phone, set_file_times
@@ -219,6 +220,7 @@ class CopyWorker(QThread):
         t0 = time.monotonic()
         tmp_dir = os.path.join(self.dest_root, TEMP_DIR_NAME)
         os.makedirs(tmp_dir, exist_ok=True)
+        hide_folder(tmp_dir)
         for d in (tmp_dir, os.path.join(self.dest_root, _OLD_TEMP_DIR_NAME)):
             _clear_partials(d)    # leftovers from a copy that was cut off last time
         try:

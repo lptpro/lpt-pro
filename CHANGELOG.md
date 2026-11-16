@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.1
+- "Hide Recently Deleted" is always shown (ticked by default), also before an iPhone is connected.
+- LPT Pro's own bookkeeping folders no longer appear in the folder list, and are hidden in
+  File Explorer on Windows.
+
 ## 0.17.0
 - Photos and videos in the iPhone's Recently Deleted album are recognised (read from the
   iPhone's Photos library, read-only).

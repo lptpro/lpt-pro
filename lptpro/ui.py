@@ -541,7 +541,9 @@ class FolderTree(QTreeView):
     def __init__(self):
         super().__init__()
         self.fs = QFileSystemModel(self)
-        self.fs.setFilter(QDir.AllDirs | QDir.NoDotAndDotDot)
+        self.fs.setFilter(QDir.Dirs | QDir.NoDotAndDotDot)
+        self.fs.setNameFilters(["[!.]*"])          # not LPT Pro's own .lptpro bookkeeping folders
+        self.fs.setNameFilterDisables(False)
         self.fs.setReadOnly(False)
         self.setModel(self.fs)
         for c in (1, 2, 3):
@@ -896,7 +898,6 @@ class MainWindow(QMainWindow):
                                      "album for about 30 days. They're hidden here while this is ticked.")
         self.hide_deleted.setChecked(self.settings.value("hide_deleted", True, type=bool))
         self.hide_deleted.toggled.connect(lambda v: (self.settings.setValue("hide_deleted", v), self.on_filter()))
-        self.hide_deleted.hide()                 # shown once the iPhone says some are there
         fh.addWidget(self.hide_deleted)
         fh.addStretch(1)
         fh.addWidget(QLabel("Size", objectName="muted"))
@@ -1400,6 +1401,8 @@ class MainWindow(QMainWindow):
                 self.deleted_reader.done.disconnect()
             except (RuntimeError, TypeError):
                 pass
+        self.hide_deleted.setText("Hide Recently Deleted")
+        self.hide_deleted.setEnabled(True)
         r = RecentlyDeletedReader(self.device)
         r.done.connect(self._on_deleted)
         self.deleted_reader = r
@@ -1414,15 +1417,16 @@ class MainWindow(QMainWindow):
             note = (f"Couldn\u2019t read the iPhone\u2019s Recently Deleted list ({reason}), "
                     "so nothing is treated as deleted.")
             self.opt_skip_deleted.setToolTip(note)
-            self.hide_deleted.hide()
+            self.hide_deleted.setToolTip(note)
+            self.hide_deleted.setEnabled(False)
         else:
             for it in self.model.items:
                 photo = it.extra.get("live_photo")   # a Live Photo's video goes with its photo
                 if it.path.upper() in paths or (photo and photo.upper() in paths):
                     it.extra["trashed"] = True
         n = sum(1 for i in self.model.items if i.extra.get("trashed"))
-        self.hide_deleted.setText(f"Hide Recently Deleted ({n:,})")
-        self.hide_deleted.setVisible(n > 0)
+        if paths is not None:
+            self.hide_deleted.setText(f"Hide Recently Deleted ({n:,})")
         self.on_filter()
         self.update_audit_summary(final=not (self.audit_worker and self.audit_worker.isRunning()))
 
