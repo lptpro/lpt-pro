@@ -70,7 +70,9 @@ class PreviewLoader(QThread):
     def run(self):
         it = self.item
         try:
-            if it.kind == "video":
+            if it.extra.get("library_only") and not self.local:
+                self.image.emit(self.token, self._icloud_preview())
+            elif it.kind == "video":
                 self.video.emit(self.token, self._video_file())
             else:
                 self.image.emit(self.token, self._photo())
@@ -91,6 +93,22 @@ class PreviewLoader(QThread):
             from .ui import plain_reason
             self.failed.emit(self.token, f"Couldn’t show this item.\n\n{plain_reason(str(e))}\n\n"
                                          f"Details: {type(e).__name__}: {str(e)[:200]}")
+
+    def _icloud_preview(self) -> QImage:
+        """The small preview the iPhone keeps of an item whose original is only in iCloud."""
+        from .jobs import ThumbLoader
+        paths = [t.format(path=self.item.path) for t in ThumbLoader.PHONE_THUMBS + ThumbLoader.PHONE_KEYFRAMES]
+        for p in paths:
+            try:
+                data = self.device.read_all(p)
+            except DeviceGone:
+                raise
+            except Exception:
+                continue
+            q = QImage.fromData(data)
+            if not q.isNull():
+                return q
+        raise RuntimeError("The iPhone has no preview of this item; its original is only in iCloud.")
 
     def _bytes(self) -> bytes:
         if self.local and os.path.isfile(self.local):
@@ -608,8 +626,14 @@ class PreviewWindow(QWidget):
         it = self.item
         if it is None:
             return
-        where = "On PC" if self.local_provider(it) else "Only on iPhone"
-        self.info_label.setText(f"{it.date:%A, %B %d, %Y  %H:%M} · {human_bytes(it.size)} · {where}")
+        if self.local_provider(it):
+            where = "On PC"
+        elif it.extra.get("library_only"):
+            where = "Only in iCloud: this is the iPhone\u2019s small preview, not the original"
+        else:
+            where = "Only on iPhone"
+        size = f" · {human_bytes(it.size)}" if it.size else ""
+        self.info_label.setText(f"{it.date:%A, %B %d, %Y  %H:%M}{size} · {where}")
 
     def _make_settings_button(self):
         """⋯ : graphics chip + video engine (for trying out smoother playback)."""
@@ -747,11 +771,12 @@ class PreviewWindow(QWidget):
         self.name_label.setText(it.name)
         self.show_item_info()
         self.setWindowTitle(f"{it.name} · Preview")
-        self.controls.setVisible(it.kind == "video" and self.player is not None)
+        preview_only = bool(it.extra.get("library_only")) and not local
+        self.controls.setVisible(it.kind == "video" and self.player is not None and not preview_only)
         self.seek.setRange(0, 0)
         self.time_label.setText("0:00 / 0:00")
 
-        if it.kind == "video" and self.player is None:
+        if it.kind == "video" and self.player is None and not preview_only:
             self._show_message("Video playback isn’t installed. Use “Open in another app”.")
             return
         self._show_message("Getting it from the iPhone…" if not local else "Loading…")

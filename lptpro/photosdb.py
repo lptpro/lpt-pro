@@ -15,6 +15,7 @@ request per page, so the phone's file service isn't flooded.
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import struct
 
@@ -203,13 +204,13 @@ class _Reader:
                     self.cache[p] = chunk
 
     # -- tables -------------------------------------------------------------------
-    def _payload(self, page: bytes, off: int) -> bytes:
+    def _payload(self, page: bytes, off: int) -> tuple[int, bytes]:
         size, i = _varint(page, off)
-        _rowid, i = _varint(page, i)
+        rowid, i = _varint(page, i)
         u = self.usable
         x = u - 35
         if size <= x:
-            return page[i:i + size]
+            return rowid, page[i:i + size]
         m = ((u - 12) * 32 // 255) - 23
         k = m + (size - m) % (u - 4)
         local = k if k <= x else m
@@ -219,10 +220,10 @@ class _Reader:
             ov = self.page(nxt)
             nxt = struct.unpack(">I", ov[:4])[0]
             out += ov[4:u]
-        return bytes(out[:size])
+        return rowid, bytes(out[:size])
 
-    def rows(self, root: int):
-        """Every record of the table whose b-tree starts at page `root`."""
+    def rows(self, root: int, with_rowid: bool = False):
+        """Every record of the table whose b-tree starts at page `root` (with its row id)."""
         level = [root]
         while level:
             self.prefetch(level)
@@ -250,10 +251,11 @@ class _Reader:
                     cells = struct.unpack(">H", pg[h + 3:h + 5])[0]
                     for c in range(cells):
                         off = struct.unpack(">H", pg[h + 8 + 2 * c:h + 10 + 2 * c])[0]
-                        yield _record(self._payload(pg, off))
+                        rowid, payload = self._payload(pg, off)
+                        yield (rowid, _record(payload)) if with_rowid else _record(payload)
             level = children
 
-    def table(self, *names: str):
+    def table(self, *names: str, required: bool = True):
         """(column names, root page) of the first table found with one of these names."""
         wanted = [n.upper() for n in names]
         found = {}
@@ -263,14 +265,50 @@ class _Reader:
         for n in wanted:
             if n in found:
                 return found[n]
+        if not required:
+            return None
         raise Unavailable("the iPhone's Photos library has an unknown layout")
 
 
 # ---------------------------------------------------------------------------
-def recently_deleted(dev) -> set[str]:
-    """Upper-case phone paths ("/DCIM/100APPLE/IMG_0001.HEIC") of items in Recently Deleted.
+APPLE_EPOCH = 978307200          # 2001-01-01 in Unix time (the library's clock)
 
-    Raises Unavailable if the list can't be read; callers then treat nothing as deleted."""
+
+class Asset:
+    __slots__ = ("path", "phone_path", "directory", "name", "kind", "trashed", "hidden", "date",
+                 "duration_ms", "original_name", "original_size")
+
+    def __init__(self, directory, name, kind, trashed, hidden, created=None, duration=None):
+        self.directory, self.name = directory, name
+        self.phone_path = "/" + directory.strip("/") + "/" + name
+        self.path = self.phone_path.upper()
+        self.kind, self.trashed, self.hidden = kind, trashed, hidden
+        self.date = None
+        if isinstance(created, (int, float)):
+            try:
+                self.date = dt.datetime.fromtimestamp(created + APPLE_EPOCH)
+            except (OverflowError, OSError, ValueError):
+                pass
+        self.duration_ms = int(duration * 1000) if isinstance(duration, (int, float)) and duration > 0 else 0
+        self.original_name = None      # e.g. IMG_1234.HEIC (the library's own file name can be an ID)
+        self.original_size = 0
+
+
+class Library:
+    """What the iPhone's Photos library lists (including items whose originals are only in iCloud)."""
+
+    def __init__(self, assets: list[Asset]):
+        self.assets = assets
+        self.trashed = {a.path for a in assets if a.trashed}
+
+    def not_in(self, paths_on_phone: set[str]) -> list[Asset]:
+        """Library items (not deleted) that aren't among these camera-roll files."""
+        return [a for a in self.assets if not a.trashed and a.path not in paths_on_phone
+                and "CLOUDSHARING" not in a.directory.upper()]      # Shared Albums aren't the library
+
+
+def read_library(dev) -> Library:
+    """Read the iPhone's Photos library list. Raises Unavailable if it can't be read."""
     try:
         dev.stat(DB_PATH)
     except Exception:
@@ -287,25 +325,73 @@ def recently_deleted(dev) -> set[str]:
             i_dir, i_name = cols.index("ZDIRECTORY"), cols.index("ZFILENAME")
         except ValueError:
             raise Unavailable("the iPhone's Photos library has an unknown layout")
-        i_state = cols.index("ZTRASHEDSTATE") if "ZTRASHEDSTATE" in cols else None
-        i_date = cols.index("ZTRASHEDDATE") if "ZTRASHEDDATE" in cols else None
-        if i_state is None and i_date is None:
+        idx = lambda c: cols.index(c) if c in cols else None
+        i_state, i_tdate, i_kind, i_hidden = idx("ZTRASHEDSTATE"), idx("ZTRASHEDDATE"), idx("ZKIND"), idx("ZHIDDEN")
+        i_created, i_dur = idx("ZDATECREATED"), idx("ZDURATION")
+        if i_state is None and i_tdate is None:
             raise Unavailable("the iPhone's Photos library has an unknown layout")
-        out, total = set(), 0
-        for rec in r.rows(root):
+        assets, total, by_pk = [], 0, {}
+        for pk, rec in r.rows(root, with_rowid=True):
             total += 1
             get = lambda i: rec[i] if i is not None and i < len(rec) else None
-            trashed = get(i_state) == 1 if i_state is not None else get(i_date) is not None
             d, n = get(i_dir), get(i_name)
-            if trashed and isinstance(d, str) and isinstance(n, str):
-                out.add(("/" + d.strip("/") + "/" + n).upper())
-        log.info("Recently Deleted: %d of %d library items (read %.1f MB in %d requests)",
-                 len(out), total, r.bytes_read / 1e6, r.requests)
-        return out
+            if not (isinstance(d, str) and isinstance(n, str)):
+                continue
+            trashed = get(i_state) == 1 if i_state is not None else get(i_tdate) is not None
+            kind = {0: "photo", 1: "video"}.get(get(i_kind))
+            a = Asset(d, n, kind, trashed, get(i_hidden) == 1, get(i_created), get(i_dur))
+            assets.append(a)
+            by_pk[pk] = a
+        # the original file name and size (used to recognise copies downloaded from iCloud)
+        extra = r.table("ZADDITIONALASSETATTRIBUTES", required=False)
+        if extra:
+            ecols, eroot = extra
+            j = lambda c: ecols.index(c) if c in ecols else None
+            j_asset, j_name, j_size = j("ZASSET"), j("ZORIGINALFILENAME"), j("ZORIGINALFILESIZE")
+            if j_asset is not None and j_name is not None:
+                for rec in r.rows(eroot):
+                    get = lambda i: rec[i] if i is not None and i < len(rec) else None
+                    a = by_pk.get(get(j_asset))
+                    if a is not None and isinstance(get(j_name), str):
+                        a.original_name = get(j_name)
+                        if isinstance(get(j_size), int):
+                            a.original_size = get(j_size)
+        lib = Library(assets)
+        log.info("Photos library: %d items (%d with a file name), %d in Recently Deleted "
+                 "(read %.1f MB in %d requests)", total, len(assets), len(lib.trashed),
+                 r.bytes_read / 1e6, r.requests)
+        return lib
     except Unavailable:
         raise
     except Exception as e:
-        log.warning("Recently Deleted list unreadable", exc_info=True)
+        log.warning("Photos library unreadable", exc_info=True)
         raise Unavailable(f"the iPhone's Photos library couldn't be read ({type(e).__name__})")
     finally:
         r.close()
+
+
+def recently_deleted(dev) -> set[str]:
+    """Upper-case phone paths ("/DCIM/100APPLE/IMG_0001.HEIC") of items in Recently Deleted."""
+    return read_library(dev).trashed
+
+
+def where_they_live(dev, assets: list[Asset], sample: int = 40) -> list[str]:
+    """Read-only look at library items outside the camera roll: grouped by folder, and for a
+    few of each, whether the original file is on the phone (and really uses storage)."""
+    groups: dict[str, list[Asset]] = {}
+    for a in assets:
+        top = "/".join(a.directory.strip("/").split("/")[:2]) or "(none)"
+        groups.setdefault(top, []).append(a)
+    lines = []
+    for top, items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        some = items[:: max(1, len(items) // sample)][:sample]
+        stats = dev.stat_many(["/" + a.directory.strip("/") + "/" + a.name for a in some])
+        found = [s for s in stats if s is not None]
+        real = [s for s in found if (s.blocks is None or s.blocks > 0) and s.size > 0]
+        kinds = {k: sum(1 for a in items if a.kind == k) for k in ("photo", "video")}
+        lines.append(f"{top}: {len(items):,} items ({kinds['photo']:,} photos, {kinds['video']:,} videos); "
+                     f"of {len(some)} checked, {len(found)} have a file on the iPhone, {len(real)} with the "
+                     f"full original stored")
+    for ln in lines:
+        log.info("library outside the camera roll: %s", ln)
+    return lines

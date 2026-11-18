@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.0
+- Photos and videos that are only in iCloud now appear in the grid with the iPhone's own
+  preview and their real name and date, tagged iCLOUD ONLY. "Hide iCloud only" hides them.
+- Opening one shows the preview, clearly labelled as a preview.
+- "Back up what's missing" first says how many are iCloud-only and will be skipped, with a
+  "What can I do?" guide.
+- Originals downloaded from icloud.com into the backup folder are recognised (same name and
+  size) and marked ON PC.
+- The show / hide choices moved to their own row, so the window fits smaller screens.
+
+## 0.18.0
+- Counts photos and videos that are in the iPhone's Photos library but only stored in
+  iCloud ("Optimize iPhone Storage"), so the backup check never says "everything is backed
+  up" while they're missing. An "Only in iCloud?" button explains how to get them.
+- The log and `--check` now note where those items live on the iPhone (read-only).
+
 ## 0.17.1
 - "Hide Recently Deleted" is always shown (ticked by default), also before an iPhone is connected.
 - LPT Pro's own bookkeeping folders no longer appear in the folder list, and are hidden in

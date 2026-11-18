@@ -181,14 +181,20 @@ def check(demo=None):
     photos = sum(1 for i in items if i.kind == "photo")
     print(f"Found {len(items):,} items ({photos:,} photos, {len(items) - photos:,} videos) in {time.time() - t:.1f}s")
     print(f"Only in iCloud (originals not on the iPhone): {n_cloud:,}")
-    from .photosdb import Unavailable, recently_deleted
+    from .photosdb import Unavailable, read_library, where_they_live
     try:
         t = time.time()
-        gone = recently_deleted(dev)
-        n_gone = sum(1 for i in items if i.path.upper() in gone)
-        print(f"In Recently Deleted: {n_gone:,} (read from the iPhone's Photos library in {time.time() - t:.1f}s)")
+        lib = read_library(dev)
+        on_phone = {i.path.upper() for i in items}
+        n_gone = sum(1 for i in items if i.path.upper() in lib.trashed)
+        missing = lib.not_in(on_phone)
+        print(f"Photos library: {len(lib.assets):,} items (read in {time.time() - t:.1f}s)")
+        print(f"In Recently Deleted: {n_gone:,}")
+        print(f"In the library but not stored on this iPhone (only in iCloud): {len(missing):,}")
+        for line in where_they_live(dev, missing):
+            print("  " + line)
     except Unavailable as e:
-        print(f"Recently Deleted: not available - {e}")
+        print(f"Photos library: not available - {e}")
     if items:
         it = items[0]
         print(f"Newest: {it.name}  {it.date:%Y-%m-%d %H:%M}  {it.size:,} bytes")

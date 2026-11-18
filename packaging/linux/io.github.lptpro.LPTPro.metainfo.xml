@@ -38,6 +38,12 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.19.0" date="2026-11-18">
+      <description><p>Shows iCloud-only photos with their previews and explains how to get the originals.</p></description>
+    </release>
+    <release version="0.18.0" date="2026-11-18">
+      <description><p>Counts photos that are only in iCloud, so nothing is reported as backed up when it isn't.</p></description>
+    </release>
     <release version="0.17.1" date="2026-11-16">
       <description><p>"Hide Recently Deleted" always shown; tidier folder list.</p></description>
     </release>

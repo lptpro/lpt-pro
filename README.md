@@ -85,10 +85,15 @@ everything is in place.
 ## Good to know
 
 - **"Only in iCloud"**: with *Optimize iPhone Storage* turned on, the iPhone keeps only a
-  small preview of older photos and videos, and the original stays in iCloud. LPT Pro
-  marks these and skips them. To back them up, set the iPhone to *Settings → Photos →
-  Download and Keep Originals* (with enough free space), wait for the downloads, then back
-  up again. You can also download them from icloud.com.
+  small preview of many photos and videos, and the original stays in iCloud. LPT Pro shows
+  them with that preview, tagged **iCLOUD ONLY**, and tells you before a backup that they'll
+  be skipped (it can only copy what is really on the phone). To get the originals:
+  1. On the PC, go to icloud.com/photos, select them and click **Download → Unmodified Original**.
+  2. Save them into your backup folder and press **Recheck**: LPT Pro recognises them and
+     marks them **ON PC**.
+
+  On Windows, Apple's free iCloud for Windows app can download the whole library. If the
+  iPhone has lots of free space, *Settings → Photos → Download and Keep Originals* works too.
 - **Something failed?** The **⚠ problems** button at the top lists each file in plain
   words. *Try these again* retries them.
 - **Logs**: the Problems window has *Open the log*, which opens a technical record that's

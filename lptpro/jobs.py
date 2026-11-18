@@ -581,7 +581,10 @@ class BackupWatcher(QThread):
         out = []
         for phone_path, (local, size, item) in missing:
             try:
-                match = index.find_match(size, lambda it=item: self.device.head_hash(it.path, it.size))
+                if item.extra.get("cloud"):     # nothing on the phone to compare with
+                    match = index.find_by_name_size(item.name, item.size)
+                else:
+                    match = index.find_match(size, lambda it=item: self.device.head_hash(it.path, it.size))
             except Exception:
                 match = None   # can't confirm (e.g. phone unplugged): don't claim it's backed up
             out.append((phone_path, match or ""))
@@ -596,28 +599,37 @@ class BackupWatcher(QThread):
             self.results.emit(out)
 
 
-class RecentlyDeletedReader(QThread):
-    """Reads which items are in the iPhone's "Recently Deleted" album (from the phone's
-    Photos library, read-only). Emits done(set of upper-case phone paths, "") or
-    done(None, plain reason) when the list can't be read."""
+class LibraryReader(QThread):
+    """Reads the iPhone's Photos library (read-only): which items are in Recently Deleted,
+    and which library items aren't files on this iPhone (originals only in iCloud).
+    Emits done(Library, [Asset not on the phone], "") or done(None, [], plain reason)."""
 
-    done = Signal(object, str)
+    done = Signal(object, object, str)
 
-    def __init__(self, device):
+    def __init__(self, device, paths_on_phone):
         super().__init__()
         self.device = device
+        self.paths = {p.upper() for p in paths_on_phone}
 
     def run(self):
         background_priority()
-        from .photosdb import Unavailable, recently_deleted
+        from .photosdb import Unavailable, read_library, where_they_live
         try:
-            self.done.emit(recently_deleted(self.device), "")
+            lib = read_library(self.device)
         except Unavailable as e:
-            log.info("Recently Deleted list not available: %s", e)
-            self.done.emit(None, str(e))
+            log.info("Photos library not available: %s", e)
+            self.done.emit(None, [], str(e))
+            return
         except Exception as e:
-            log.warning("Recently Deleted list failed", exc_info=True)
-            self.done.emit(None, f"couldn't be read ({type(e).__name__})")
+            log.warning("Photos library failed", exc_info=True)
+            self.done.emit(None, [], f"couldn't be read ({type(e).__name__})")
+            return
+        missing = lib.not_in(self.paths)
+        try:
+            where_they_live(self.device, missing)
+        except Exception:
+            log.debug("library look-around failed", exc_info=True)
+        self.done.emit(lib, missing, "")
 
 
 class CaptureDateReader(QThread):
@@ -889,7 +901,9 @@ class ThumbLoader(QThread):
                         src = Image.open(io.BytesIO(phone))
                         src.draft("RGB", (640, 640))
                         im = ImageOps.exif_transpose(src)
-                        if it.kind == "video":
+                        if it.kind == "video" and it.extra.get("library_only"):
+                            duration = it.extra.get("duration", 0)   # from the Photos library
+                        elif it.kind == "video":
                             from .media import video_duration_ms
                             r = heic.PhoneReader(self.device, it.path, it.size, block=16 * 1024)
                             try:
@@ -897,6 +911,8 @@ class ThumbLoader(QThread):
                             finally:
                                 r.close()
                             write_atomic(cp + ".dur", str(duration).encode())
+                    elif it.extra.get("library_only"):
+                        pass   # only in iCloud and no preview on the phone: nothing to read
                     elif it.kind == "video":
                         # no iPhone thumbnail: the video tile maker decodes a frame instead
                         handed = True

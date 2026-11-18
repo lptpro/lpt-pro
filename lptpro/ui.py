@@ -6,6 +6,7 @@ import datetime as dt
 import logging
 import os
 import shutil
+import sys
 import tempfile
 import time
 
@@ -22,7 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 from . import APP_LONG_NAME, APP_NAME, __version__, settings
 from .backup_index import BackupIndex
 from .jobs import (AuditWorker, BackupWatcher, CaptureDateReader, ConnectAndScan, CopyWorker,
-                   RecentlyDeletedReader, ThumbLoader)
+                   LibraryReader, ThumbLoader)
 from . import heic
 from .preview import PreviewWindow, clock
 from .videothumbs import VideoThumbnailer
@@ -72,6 +73,7 @@ class GridModel(QAbstractListModel):
         self.only_missing = False
         self.hide_live = False
         self.hide_deleted = False
+        self.hide_icloud = False
         self.month = 0      # 0 = all months
         self.year = 0       # 0 = all years
         self.kind = "all"
@@ -91,6 +93,8 @@ class GridModel(QAbstractListModel):
         if self.hide_live and it.extra.get("live"):
             return False
         if self.hide_deleted and it.extra.get("trashed"):
+            return False
+        if self.hide_icloud and it.extra.get("cloud") and it.backed_up is not True:
             return False
         if self.year and it.date.year != self.year:
             return False
@@ -838,6 +842,12 @@ class MainWindow(QMainWindow):
         col.addWidget(self.audit_bar)
         col.addWidget(self.audit_text)
         ah.addLayout(col, 1)
+        self.icloud_btn = QPushButton("Only in iCloud?")
+        self.icloud_btn.setToolTip("Why some photos aren\u2019t on this iPhone, and how to back them up")
+        self.icloud_btn.clicked.connect(self.explain_icloud_library)
+        self.icloud_btn.hide()
+        ah.addWidget(self.icloud_btn)
+        self.library_missing = []          # library items whose originals aren't files on this iPhone
         self.recheck_btn = QPushButton("Recheck")
         self.recheck_btn.clicked.connect(self.start_audit)
         self.backup_missing_btn = QPushButton("Back up what’s missing", objectName="orange")
@@ -849,8 +859,13 @@ class MainWindow(QMainWindow):
 
         # filter row
         bar = QFrame(objectName="filterbar")
-        fh = QHBoxLayout(bar)
-        fh.setContentsMargins(16, 8, 16, 8)
+        rows = QVBoxLayout(bar)
+        rows.setContentsMargins(16, 8, 16, 6)
+        rows.setSpacing(6)
+        fh = QHBoxLayout()
+        sh = QHBoxLayout()            # second row: the show / hide choices
+        rows.addLayout(fh)
+        rows.addLayout(sh)
         self.only_missing = QCheckBox("Only show not backed up")
         self.only_missing.toggled.connect(self.on_filter)
         self.kind_group = QButtonGroup(self)
@@ -882,23 +897,30 @@ class MainWindow(QMainWindow):
             box.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         fh.addWidget(self.month_box)
         fh.addWidget(self.year_box)
-        fh.addSpacing(12)
-        fh.addWidget(self.only_missing)
-        fh.addSpacing(12)
+        sh.addWidget(self.only_missing)
+        sh.addSpacing(16)
         self.hide_live = QCheckBox("Hide Live Photo videos")
         self.hide_live.setToolTip("The short video half of a Live Photo (same name as a photo, e.g.\n"
                                   "IMG_1234.HEIC + IMG_1234.MOV). They're still copied with their photo\n"
                                   "when \u201cKeep Live Photo pairs together\u201d is on.")
         self.hide_live.setChecked(self.settings.value("hide_live", False, type=bool))
         self.hide_live.toggled.connect(lambda v: (self.settings.setValue("hide_live", v), self.on_filter()))
-        fh.addWidget(self.hide_live)
-        fh.addSpacing(12)
+        sh.addWidget(self.hide_live)
+        sh.addSpacing(16)
         self.hide_deleted = QCheckBox("Hide Recently Deleted")
         self.hide_deleted.setToolTip("Photos and videos you deleted on the iPhone stay in its \u201cRecently Deleted\u201d\n"
                                      "album for about 30 days. They're hidden here while this is ticked.")
         self.hide_deleted.setChecked(self.settings.value("hide_deleted", True, type=bool))
         self.hide_deleted.toggled.connect(lambda v: (self.settings.setValue("hide_deleted", v), self.on_filter()))
-        fh.addWidget(self.hide_deleted)
+        sh.addWidget(self.hide_deleted)
+        sh.addSpacing(16)
+        self.hide_icloud = QCheckBox("Hide iCloud only")
+        self.hide_icloud.setToolTip("Photos and videos whose full-size original is only in iCloud. The iPhone keeps\n"
+                                    "a small preview of them, but they can\u2019t be copied from the phone.")
+        self.hide_icloud.setChecked(self.settings.value("hide_icloud", False, type=bool))
+        self.hide_icloud.toggled.connect(lambda v: (self.settings.setValue("hide_icloud", v), self.on_filter()))
+        sh.addWidget(self.hide_icloud)
+        sh.addStretch(1)
         fh.addStretch(1)
         fh.addWidget(QLabel("Size", objectName="muted"))
         self.size_slider = QSlider(Qt.Horizontal)
@@ -1308,6 +1330,7 @@ class MainWindow(QMainWindow):
 
     def on_audit_done(self):
         self.update_audit_summary(final=True)
+        self._match_library_items()
         if self.only_missing.isChecked():
             self.rebuild_grid()
 
@@ -1320,11 +1343,13 @@ class MainWindow(QMainWindow):
         done = sum(1 for i in items if i.backed_up is True)
         cloud = [i for i in items if i.backed_up is not True and i.extra.get("cloud")]
         missing = [i for i in items if i.backed_up is False and not i.extra.get("cloud")]
+        lib_only = 0      # library items are in the grid now (as iCloud-only items)
         checked = done + len(missing) + sum(1 for i in cloud if i.backed_up is False)
         self.audit_bar.setMaximum(max(1, len(items)))
         self.audit_bar.setValue(done)
         if final or checked == len(items):
-            except_ = [f"{len(cloud):,} only in iCloud"] if cloud else []
+            n_icloud = len(cloud) + lib_only
+            except_ = [f"{n_icloud:,} only in iCloud"] if n_icloud else []
             if trashed:
                 except_.append(f"{len(trashed):,} in Recently Deleted")
             if missing:
@@ -1335,7 +1360,8 @@ class MainWindow(QMainWindow):
             else:
                 self.audit_title.setText("Everything on this iPhone is backed up ✓")
             self.audit_text.setText(f"{done:,} backed up · {len(missing):,} not backed up"
-                                    + (f" · {len(cloud):,} only in iCloud (not on this iPhone)" if cloud else "")
+                                    + (f" · {len(cloud) + lib_only:,} only in iCloud (not stored on this iPhone)"
+                                       if cloud or lib_only else "")
                                     + (f" · {len(trashed):,} in Recently Deleted (skipped)" if trashed else "")
                                     + " · matched by content, so renamed or re-sorted files still count")
         # Usable while the check is still running: the copy re-checks every item against the
@@ -1364,6 +1390,7 @@ class MainWindow(QMainWindow):
         self.model.only_missing = self.only_missing.isChecked()
         self.model.hide_live = self.hide_live.isChecked()
         self.model.hide_deleted = self.hide_deleted.isChecked()
+        self.model.hide_icloud = self.hide_icloud.isChecked()
         self.model.month = self.month_box.currentData() or 0
         self.model.year = self.year_box.currentData() or 0
         self.hide_live.setVisible(self.model.kind != "photo")
@@ -1403,14 +1430,18 @@ class MainWindow(QMainWindow):
                 pass
         self.hide_deleted.setText("Hide Recently Deleted")
         self.hide_deleted.setEnabled(True)
-        r = RecentlyDeletedReader(self.device)
+        self.library_missing = []
+        self.icloud_btn.hide()
+        r = LibraryReader(self.device, [i.path for i in self.model.items])
         r.done.connect(self._on_deleted)
         self.deleted_reader = r
         r.start()
 
-    def _on_deleted(self, paths, reason):
+    def _on_deleted(self, lib, missing, reason):
         if self.sender() is not self.deleted_reader:
             return                                   # from an earlier connection
+        paths = lib.trashed if lib is not None else None
+        self._add_library_items(missing)
         for it in self.model.items:
             it.extra.pop("trashed", None)
         if paths is None:
@@ -1427,8 +1458,62 @@ class MainWindow(QMainWindow):
         n = sum(1 for i in self.model.items if i.extra.get("trashed"))
         if paths is not None:
             self.hide_deleted.setText(f"Hide Recently Deleted ({n:,})")
+        self._render_icloud_count()
         self.on_filter()
         self.update_audit_summary(final=not (self.audit_worker and self.audit_worker.isRunning()))
+
+    def _add_library_items(self, assets):
+        """Items in the Photos library whose originals aren't files on this iPhone: shown with
+        the iPhone's preview and tagged iCLOUD ONLY (they can't be copied from the phone)."""
+        from .media import kind_of
+        if not assets:
+            return
+        known = {i.path.upper() for i in self.model.items}
+        new = []
+        for a in assets:
+            if a.path in known:
+                continue
+            name = a.original_name or a.name
+            kind = a.kind or kind_of(name) or "photo"
+            it = MediaItem(path=a.phone_path, name=name, size=a.original_size,
+                           date=a.date or dt.datetime(2000, 1, 1), kind=kind)
+            it.extra.update(cloud=True, library_only=True)
+            if kind == "video" and a.duration_ms:
+                it.extra["duration"] = a.duration_ms
+            new.append(it)
+        if not new:
+            return
+        log.info("showing %d library items whose originals are only in iCloud", len(new))
+        items = sorted(self.model.items + new, key=lambda x: (x.date, x.name), reverse=True)
+        self._fill_years(items)
+        self.model.set_items(items)
+        self._match_library_items()
+
+    def _match_library_items(self):
+        """Recognise iCloud-only items already in the backup folder (same name and size),
+        e.g. downloaded from icloud.com. Needs the backup check's index."""
+        if self.audit_worker and self.audit_worker.isRunning():
+            return                                   # done again when the check finishes
+        index = getattr(self, "_index", None)
+        for it in self.model.items:
+            if not it.extra.get("library_only") or it.backed_up is True:
+                continue
+            match = index.find_by_name_size(it.name, it.size) if (index and it.size) else None
+            if match:
+                self._mark_on_pc(it, match)
+            else:
+                self._mark_not_on_pc(it)
+        self._render_icloud_count()
+        self.update_audit_summary(final=True)
+
+    def _icloud_items(self):
+        return [i for i in self.model.items if i.extra.get("cloud") and i.backed_up is not True
+                and not self._skips_deleted(i)]
+
+    def _render_icloud_count(self):
+        n = len(self._icloud_items())
+        self.hide_icloud.setText(f"Hide iCloud only ({n:,})" if n else "Hide iCloud only")
+        self.icloud_btn.setVisible(n > 0)
 
     # -- dates taken ---------------------------------------------------------------
     def _start_dates(self, items):
@@ -1620,6 +1705,9 @@ class MainWindow(QMainWindow):
         if local and os.path.exists(local):
             QDesktopServices.openUrl(QUrl.fromLocalFile(local))
             return
+        if it.extra.get("library_only"):
+            self.explain_icloud_library()
+            return
         dest = os.path.join(tempfile.gettempdir(), "LPTPro-preview")
         os.makedirs(dest, exist_ok=True)
         self.set_status(f"Opening {it.name}…")
@@ -1638,8 +1726,30 @@ class MainWindow(QMainWindow):
         # the copy skips any that turn out to be backed up already)
         todo = [i.path for i in self.model.items if i.backed_up is not True and not i.extra.get("cloud")
                 and not self._skips_deleted(i)]
+        cloud = self._icloud_items()
+        if cloud and not self._confirm_icloud_skip(len(todo), len(cloud)):
+            return
         if todo:
             self.start_copy(todo, self.backup_root, force_skip=True)
+
+    def _confirm_icloud_skip(self, n_copy, n_cloud) -> bool:
+        """Before a backup: say plainly that iCloud-only items will be skipped."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Some items are only in iCloud")
+        box.setIcon(QMessageBox.Information)
+        box.setText(f"{n_cloud:,} photos and videos are only in iCloud, so they can\u2019t be copied "
+                    f"from the iPhone and will be skipped."
+                    + (f"\n\nThe other {n_copy:,} will be backed up now." if n_copy else ""))
+        go = box.addButton(f"Back up the {n_copy:,}" if n_copy else "OK", QMessageBox.AcceptRole)
+        help_ = box.addButton("What can I do?", QMessageBox.HelpRole)
+        if n_copy:
+            box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(go)
+        box.exec()
+        if box.clickedButton() is help_:
+            self.explain_icloud_library()
+            return False
+        return box.clickedButton() is go and n_copy > 0
 
     def start_copy(self, paths, dest_root, template=None, force_skip=False):
         if not self.connected:
@@ -1795,10 +1905,6 @@ class MainWindow(QMainWindow):
         self.set_status(("Stopped — " if cancelled else "Done — ") + ", ".join(parts))
         self.copy_worker = None
         self._pause_prefetch(False)
-        in_cloud = sum(1 for i in self.model.items if i.backed_up is not True and i.extra.get("cloud"))
-        if in_cloud and not getattr(self, "_told_about_icloud", False):
-            self._told_about_icloud = True
-            self.explain_icloud(in_cloud)
         self._apply_backup_root()
         if self.only_missing.isChecked():
             self.rebuild_grid()
@@ -1899,18 +2005,24 @@ class MainWindow(QMainWindow):
             self.set_status("The iPhone was unplugged. Nothing on it was changed. Plug it back in to continue.")
         self.retry_timer.start()
 
-    def explain_icloud(self, n):
-        msg = (f"{n:,} photos and videos weren’t copied because their full-size originals "
-               f"aren’t on the iPhone. They’re stored only in iCloud (the setting "
-               f"“Optimize iPhone Storage”): the phone keeps a small preview, which is what "
-               f"you see in the app, but not the original.\n\n"
-               f"They’re marked “iCLOUD ONLY”. Nothing is lost: they’re safe in iCloud.\n\n"
-               f"To back them up as well, either:\n"
-               f"•  on the iPhone: Settings → Photos → “Download and Keep Originals” (needs "
-               f"enough free space), wait for the downloads, then reconnect and back up again, or\n"
-               f"•  download them on the PC from icloud.com/photos.")
-        QMessageBox(QMessageBox.Information, "Some originals are only in iCloud", msg,
-                    QMessageBox.Ok, self).open()
+    def explain_icloud_library(self):
+        n = len(self._icloud_items())
+        win = sys.platform == "win32"
+        msg = (f"{n:,} photos and videos on this iPhone are only in iCloud. Their full-size "
+               f"originals aren\u2019t stored on the phone (\u201cOptimize iPhone Storage\u201d is on): "
+               f"the iPhone just keeps the small preview you see here, and downloads the original "
+               f"when you open it. Nothing is lost, but they are NOT in your backup yet.\n\n"
+               f"The easiest way, whatever space your iPhone has:\n"
+               f"1.  On this PC, go to icloud.com/photos and sign in.\n"
+               f"2.  Select the photos (click one, then Shift-click another to select a range).\n"
+               f"3.  Click Download and choose \u201cUnmodified Original\u201d.\n"
+               f"4.  Save them into your backup folder, then press Recheck here. "
+               f"LPT Pro recognises them and marks them ON PC.\n"
+               + ("\nOr install Apple\u2019s free iCloud for Windows app, which can download the whole "
+                  "library to this PC.\n" if win else "")
+               + "\nIf your iPhone has lots of free space, you can also switch it to Settings \u2192 "
+               "Photos \u2192 \u201cDownload and Keep Originals\u201d.")
+        QMessageBox(QMessageBox.Information, "Only in iCloud", msg, QMessageBox.Ok, self).open()
 
     def on_copy_stopped_failing(self, n, reason):
         msg = (f"The copy stopped because {n} files in a row couldn’t be copied, even after "
