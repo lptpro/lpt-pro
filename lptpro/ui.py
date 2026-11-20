@@ -71,7 +71,9 @@ class GridModel(QAbstractListModel):
         self.selected: set[str] = set()
         self.thumbs: dict[str, QPixmap] = {}
         self.requested: set[str] = set()
-        self.show = "all"         # all | phone | icloud | missing
+        self.show = "all"         # all | phone | icloud | missing | fav
+        self.current = None       # the item open in the viewer ("you are here" outline)
+        self.stars = False        # Album mode: show the favorite star on tiles
         self.waiting = False      # True until it's known which items are in Recently Deleted
         self.hide_live = False
         self.hide_deleted = False
@@ -97,6 +99,8 @@ class GridModel(QAbstractListModel):
         if self.show == "phone" and cloud:
             return False
         if self.show == "icloud" and not (cloud and it.backed_up is not True):
+            return False
+        if self.show == "fav" and not it.extra.get("fav"):
             return False
         if self.hide_live and it.extra.get("live"):
             return False
@@ -180,6 +184,22 @@ class TileDelegate(QStyledItemDelegate):
         super().__init__(view)
         self.view, self.model, self.request_thumb = view, model, request_thumb
         self.tile = 128
+
+    def star_rect(self, r: QRect) -> QRect:
+        """Where the favorite star sits on a tile drawn in rect r (bottom-left corner)."""
+        return QRect(r.x() + 9, r.y() + self.tile - 31, 22, 22)
+
+    @staticmethod
+    def _star(rect: QRect) -> QPolygon:
+        import math
+        cx, cy = rect.center().x() + 0.5, rect.center().y() + 0.5
+        outer, inner = rect.width() / 2, rect.width() / 4.6
+        pts = []
+        for k in range(10):
+            a = -math.pi / 2 + k * math.pi / 5
+            rad = outer if k % 2 == 0 else inner
+            pts.append(QPoint(round(cx + rad * math.cos(a)), round(cy + rad * math.sin(a))))
+        return QPolygon(pts)
 
     def sizeHint(self, option, index):
         row = index.data(Qt.UserRole)
@@ -275,6 +295,19 @@ class TileDelegate(QStyledItemDelegate):
         p.setPen(QPen(QColor("#ffffff"), 2))
         p.setBrush(ACCENT if sel else QColor(0, 0, 0, 70))
         p.drawEllipse(cr)
+        if self.model.stars:
+            star = self._star(self.star_rect(r))
+            if it.extra.get("fav"):
+                p.setPen(QPen(QColor(0, 0, 0, 120), 1.2))
+                p.setBrush(QColor("#ffc94a"))
+            else:
+                p.setPen(QPen(QColor(255, 255, 255, 170), 1.6))
+                p.setBrush(QColor(0, 0, 0, 60))
+            p.drawPolygon(star)
+        if it.path == self.model.current and not sel:
+            p.setPen(QPen(QColor("#ffffff"), 2, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(box.adjusted(-1, -1, 1, 1), 9, 9)
         if sel:
             p.setPen(QPen(QColor("#ffffff"), 2.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             p.drawPolyline(QPolygon([QPoint(cr.x() + 5, cr.y() + 10), QPoint(cr.x() + 9, cr.y() + 14), QPoint(cr.x() + 15, cr.y() + 6)]))
@@ -369,8 +402,21 @@ class ShiftController(QObject):
         return False
 
 
+def follow_viewer(model, grid, it):
+    """The viewer moved to another item: outline it in the grid and scroll to it. The selection
+    follows only when at most one item is selected, so a careful multi-selection is never lost."""
+    model.current = it.path
+    if len(model.selected) <= 1 and it.path not in model.selected:
+        model.select_only([it.path])
+    row = model.row_of.get(it.path)
+    if row is not None:
+        grid.scrollTo(model.index(row), QAbstractItemView.EnsureVisible)
+    model.refresh_all()
+
+
 class GridView(QListView):
     open_item = Signal(object)
+    star_clicked = Signal(object)     # Album mode: the favorite star on a tile was clicked
 
     def __init__(self, model: GridModel):
         super().__init__()
@@ -395,6 +441,7 @@ class GridView(QListView):
         self._scroll_timer.timeout.connect(self._auto_scroll)
         self.multi = lambda: False        # set by the window (Shift controller)
         self.on_click = lambda: None
+        self.allow_drag = True            # drag selected tiles out (to copy them)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
@@ -425,7 +472,7 @@ class GridView(QListView):
         if self._press and (e.buttons() & Qt.LeftButton):
             pos, ix = self._press
             if (p - pos).manhattanLength() > QApplication.startDragDistance():
-                if self._starts_on_selected(ix):
+                if self.allow_drag and self._starts_on_selected(ix):
                     self._press = None
                     self._start_drag()
                 else:
@@ -497,9 +544,17 @@ class GridView(QListView):
         if self._press and e.button() == Qt.LeftButton:
             pos, ix = self._press
             self._press = None
-            if ix.isValid():
+            if not ix.isValid():
+                if self.m.selected:
+                    self.m.select_only([])                             # click on a blank area
+            else:
                 self.on_click()
                 row = ix.data(Qt.UserRole)
+                if row[0] == "i" and self.m.stars and \
+                        self.itemDelegate().star_rect(self.visualRect(ix)).adjusted(-3, -3, 3, 3).contains(pos):
+                    self.star_clicked.emit(row[1])
+                    super().mouseReleaseEvent(e)
+                    return
                 if row[0] == "h":
                     paths = [i.path for i in row[2]]
                     all_sel = all(p in self.m.selected for p in paths)
@@ -1187,7 +1242,9 @@ class MainWindow(QMainWindow):
         self.status_label.setText(text)
 
     # -- device ---------------------------------------------------------------
-    def connect_device(self):
+    def connect_device(self, quiet=False):
+        """quiet: a background check (every few seconds while no iPhone is connected); the
+        screen only changes once an iPhone actually answers."""
         if self.scan_worker and self.scan_worker.isRunning():
             return
         # quick local check first: if the iPhone USB service isn't there, say what to do
@@ -1200,10 +1257,15 @@ class MainWindow(QMainWindow):
                 self.on_connect_failed(steps[0].title)
                 return
         self.manual_disconnect = False
-        self.retry_btn.hide()
-        self.device_label.setText("Connecting…")
+        self._quiet = quiet
+        if not quiet:
+            self.retry_btn.hide()
+            self.device_label.setText("Connecting…")
         w = ConnectAndScan(self.device)
-        w.status.connect(self.set_status)
+        if quiet:
+            w.status.connect(lambda m: None if m.startswith("Connecting") else self.set_status(m))
+        else:
+            w.status.connect(self.set_status)
         w.connected.connect(self.on_connected)
         w.failed.connect(self.on_connect_failed)
         w.scanned.connect(self.on_scanned)
@@ -1212,9 +1274,10 @@ class MainWindow(QMainWindow):
 
     def _auto_retry(self):
         if not self.connected and not self.manual_disconnect:
-            self.connect_device()
+            self.connect_device(quiet=True)
 
     def on_connected(self, label):
+        self._last_fail = None
         self.setup_card.hide()
         self.connected = True
         self.retry_timer.stop()
@@ -1278,6 +1341,13 @@ class MainWindow(QMainWindow):
         elif "Trust" in msg:
             steps = [setup_check.trust_step()]
         self.connected = False
+        if getattr(self, "_quiet", False):
+            # a background check found nothing new: leave the screen exactly as it is
+            title = steps[0].title if steps else msg
+            if title == getattr(self, "_last_fail", None):
+                self.retry_timer.start()
+                return
+        self._last_fail = steps[0].title if steps else msg
         self.device_label.setText("iPhone is disconnected" if "disconnected" in msg else "Not connected")
         self.device_label.setProperty("ok", False)
         self.device_label.style().polish(self.device_label)
@@ -1791,7 +1861,8 @@ class MainWindow(QMainWindow):
                                           if self.local_of.get(x.path) and os.path.exists(self.local_of[x.path])
                                           else None),
                 open_external=self.open_external,
-                on_busy=self._preview_busy)
+                on_busy=self._preview_busy,
+                on_current=lambda x: follow_viewer(self.model, self.grid, x))
         self.preview.show_item(it)
         self.preview.show()
         self.preview.raise_()
@@ -2170,13 +2241,30 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Add downloaded photos", f"No photos or videos were found in {label}.")
             return
         log.info("adding %d downloaded items from %s", len(items), label)
-        w = CopyWorker(source, self.make_index(), items, self.backup_root, self.template.currentText(),
+        self._start_copy_job(source, items, folder, self.backup_root, self.make_index(),
+                             self.template.currentText(), self.opt_jpeg.isChecked(),
+                             self.opt_keep_heic.isChecked(), "import")
+
+    def start_export(self, source, items, dest, organize, jpeg):
+        """Album mode: copy favorites to a separate folder (for a photo book or prints)."""
+        if self.copying:
+            QMessageBox.information(self, "Copy in progress", "A copy is already running. It\u2019ll be ready for more when it finishes.")
+            return
+        os.makedirs(dest, exist_ok=True)
+        index = BackupIndex([dest], os.path.join(self.data_dir, "export-fingerprints.json"))
+        index.build()                      # what's there already (exporting again adds only new ones)
+        log.info("exporting %d favorites to %s", len(items), dest)
+        self._start_copy_job(source, items, dest, dest, index,
+                             self.template.currentText() if organize else "No subfolders", jpeg, False, "export")
+
+    def _start_copy_job(self, source, items, folder, dest_root, index, template, jpeg, keep_heic, kind):
+        w = CopyWorker(source, index, items, dest_root, template,
                        set_dates=self.opt_dates.isChecked(), include_aae=False, skip_backed_up=True,
-                       heic_to_jpeg=self.opt_jpeg.isChecked(), keep_heic=self.opt_keep_heic.isChecked())
+                       heic_to_jpeg=jpeg, keep_heic=keep_heic)
         w.progress.connect(self.on_copy_progress)
-        w.item_failed.connect(lambda path, why: log.warning("add failed %s: %s", path, why))
+        w.item_failed.connect(lambda path, why: log.warning("%s failed %s: %s", kind, path, why))
         w.note.connect(self.show_note)
-        w.finished_all.connect(lambda c, s, f, x: self._on_import_finished(source, folder, c, s, f, x))
+        w.finished_all.connect(lambda c, s, f, x: self._on_import_finished(source, folder, c, s, f, x, kind))
         self.copy_worker = w
         self.progress.show()
         self.pause_btn.show()
@@ -2188,7 +2276,7 @@ class MainWindow(QMainWindow):
         w.start()
         self._pause_prefetch(True)
 
-    def _on_import_finished(self, source, folder, copied, skipped, failed, cancelled):
+    def _on_import_finished(self, source, folder, copied, skipped, failed, cancelled, kind="import"):
         self.progress.hide()
         self.pause_btn.hide()
         self.cancel_btn.hide()
@@ -2199,12 +2287,24 @@ class MainWindow(QMainWindow):
         if hasattr(source, "close") and not isinstance(source, FolderBackend):
             source.close()
         self._pause_prefetch(False)
-        parts = [f"{copied:,} added and verified"]
+        export = kind == "export"
+        parts = [f"{copied:,} {'exported' if export else 'added'} and verified"]
         if skipped:
-            parts.append(f"{skipped:,} were already in your backup")
+            parts.append(f"{skipped:,} were already {'exported' if export else 'in your backup'}")
         if failed:
             parts.append(f"{failed:,} failed (see the log)")
         self.set_status(("Stopped — " if cancelled else "Done — ") + ", ".join(parts))
+        if export:
+            self.update_copy_button()
+            self.update_audit_summary(final=True)
+            QApplication.alert(self)
+            if not cancelled:
+                self._show_done(copied, skipped, 0, failed,
+                                note=("Your favorites are ready in that folder, for example to upload "
+                                      "for a photo book or prints." if not failed else
+                                      "Some favorites couldn\u2019t be copied; see the log."),
+                                folder=folder, folder_label="Show exported folder")
+            return
         self._apply_backup_root()
         # what was just added may be photos the iPhone only has in iCloud: recognise them
         if getattr(self, "_index", None) is not None:
@@ -2327,7 +2427,8 @@ class MainWindow(QMainWindow):
                                     f"Nothing on the iPhone was changed.")
         e.accept()
 
-    def _show_done(self, copied, skipped, cloud, failed, note=None, folder=None):
+    def _show_done(self, copied, skipped, cloud, failed, note=None, folder=None,
+                   folder_label="Show downloaded folder"):
         """Big 'Done!' card when a copy finishes, readable from across the room."""
         from PySide6.QtWidgets import QDialog
         old = getattr(self, "_done_card", None)
@@ -2381,7 +2482,7 @@ class MainWindow(QMainWindow):
             prob.clicked.connect(lambda: (d.close(), self.show_problems()))
             row.addWidget(prob)
         if folder:
-            show = QPushButton("Show downloaded folder")
+            show = QPushButton(folder_label)
             show.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(folder)))
             row.addWidget(show)
         okb = QPushButton("OK", objectName="primary")

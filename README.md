@@ -26,6 +26,9 @@ Free and open source, for Windows and Linux.</p>
 - Plays videos and opens photos full size, straight from the phone.
 - **Album mode**: browse your whole backup on the PC, no iPhone needed. Pick a year and
   month, open photos and videos, and right-click **Show in folder** to jump to the file.
+- **Favorites**: press **F** (or click the ★) on photos you love, then **Export favorites…**
+  copies just those into a separate folder, by date or all together, as JPEG if you like.
+  Handy for a photo book or prints. Marking favorites copies nothing until you export.
 - Recognises photos in the iPhone's **Recently Deleted** album and leaves them out by
   default, so a pile of deleted screenshots doesn't get backed up.
 - Is honest about photos whose full-size original is **only in iCloud** (the iPhone

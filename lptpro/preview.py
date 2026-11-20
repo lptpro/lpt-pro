@@ -394,9 +394,12 @@ class ImageView(QWidget):
 
 
 class PreviewWindow(QWidget):
-    def __init__(self, device, cache_dir: str, items_provider, local_provider, open_external, on_busy=None):
+    def __init__(self, device, cache_dir: str, items_provider, local_provider, open_external, on_busy=None,
+                 on_current=None, on_favorite=None):
         super().__init__(None, Qt.Window)
         self.on_busy = on_busy or (lambda busy: None)   # pause background work while a video plays
+        self.on_current = on_current or (lambda it: None)   # the grid follows what's shown here
+        self.on_favorite = on_favorite                       # Album mode: F marks a favorite
         self.settings = settings()
         self.device, self.cache_dir = device, cache_dir
         self.items_provider = items_provider        # () -> list[MediaItem] in grid order
@@ -441,7 +444,7 @@ class PreviewWindow(QWidget):
         th.addSpacing(10)
         th.addLayout(col, 1)
         self.full_btn = QPushButton("Full screen")
-        self.full_btn.setToolTip("Full screen  (Tab or F)\nPress Tab, F or Esc to come back")
+        self.full_btn.setToolTip("Full screen  (Tab)\nPress Tab or Esc to come back")
         self.full_btn.setFocusPolicy(Qt.NoFocus)
         self.full_btn.clicked.connect(self.toggle_full)
         th.addWidget(self.full_btn)
@@ -540,7 +543,7 @@ class PreviewWindow(QWidget):
 
         self._keys = {Qt.Key_Left: lambda: self.step(-1), Qt.Key_Right: lambda: self.step(1),
                       Qt.Key_Space: self.toggle_play, Qt.Key_Escape: self._escape,
-                      Qt.Key_F: self.toggle_full, Qt.Key_Tab: self.toggle_full,
+                      Qt.Key_F: self._favorite, Qt.Key_Tab: self.toggle_full,
                       Qt.Key_0: lambda: self.image_view.fit()}
         for key, fn in self._keys.items():
             QShortcut(QKeySequence(key), self, activated=fn)
@@ -626,7 +629,15 @@ class PreviewWindow(QWidget):
         else:
             where = "Only on iPhone"
         size = f" · {human_bytes(it.size)}" if it.size else ""
-        self.info_label.setText(f"{it.date:%A, %B %d, %Y  %H:%M}{size} · {where}")
+        fav = ""
+        if self.on_favorite is not None:
+            fav = "  ·  \u2605 Favorite" if it.extra.get("fav") else "  ·  F = favorite"
+        self.info_label.setText(f"{it.date:%A, %B %d, %Y  %H:%M}{size} · {where}{fav}")
+
+    def _favorite(self):
+        if self.on_favorite is not None and self.item is not None:
+            self.on_favorite(self.item)
+            self.show_item_info()
 
     def _make_settings_button(self):
         """⋯ : graphics chip + video engine (for trying out smoother playback)."""
@@ -760,7 +771,7 @@ class PreviewWindow(QWidget):
         self._old_loaders = [l for l in self._old_loaders if l.isRunning()]
 
         local = self.local_provider(it)
-        where = "On PC" if local else "Only on iPhone"
+        self.on_current(it)
         self.name_label.setText(it.name)
         self.show_item_info()
         self.setWindowTitle(f"{it.name} · Preview")
@@ -892,8 +903,8 @@ class PreviewWindow(QWidget):
         if e.type() == QEvent.WindowStateChange and hasattr(self, "full_btn"):
             full = self.isFullScreen()
             self.full_btn.setText("Exit full screen" if full else "Full screen")
-            self.full_btn.setToolTip("Back to the window  (Tab, F or Esc)" if full
-                                     else "Full screen  (Tab or F)\nPress Tab, F or Esc to come back")
+            self.full_btn.setToolTip("Back to the window  (Tab or Esc)" if full
+                                     else "Full screen  (Tab)\nPress Tab or Esc to come back")
 
     def toggle_full(self):
         """Full screen <-> exactly how the window was before (maximized or normal)."""

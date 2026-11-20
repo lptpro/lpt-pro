@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.22.0
+- **Favorites** in Album mode: press F, click the ★ on a tile, or right-click → Add to
+  favorites (works on a whole selection). Show → Favorites lists them. The list is kept in
+  the backup folder; nothing is copied until you export.
+- **Export favorites…**: copies the favorites into a separate folder (default "LPT Pro
+  Favorites" in Pictures), organized by date or all in one folder, HEIC saved as JPEG by
+  default. Shows the space needed first; exporting again only adds new favorites.
+- The grid follows the viewer: a "you are here" outline and scrolling; the selection follows
+  only when one item is selected, so a multi-selection is never lost.
+- Click a blank area of the grid to deselect. Shift multi-select now works in Album mode too.
+- No more "Connecting…" flicker: background checks for an iPhone don't change the screen.
+- Viewer: F = favorite (Album mode); full screen is Tab (Esc to leave).
+- Album right-click menu: Open, Add to / Remove from favorites, Show in folder.
+
 ## 0.21.0
 - **Album mode** (iPhone | Album, top bar): browse the backup folder without the iPhone,
   by year and month, with the same viewer and video player. Right-click a photo for

@@ -39,6 +39,9 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.22.0" date="2026-11-20">
+      <description><p>Favorites and Export favorites in Album mode; the grid follows the viewer.</p></description>
+    </release>
     <release version="0.21.0" date="2026-11-20">
       <description><p>Album mode: browse the backup on the PC without the iPhone.</p></description>
     </release>

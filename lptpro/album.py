@@ -8,16 +8,21 @@ next visit is instant. Right-click a tile for "Show in folder".
 from __future__ import annotations
 
 import calendar
-import datetime as dt
+import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 
-from PySide6.QtCore import QThread, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QDesktopServices, QPixmap
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout,
-                               QLabel, QMenu, QPushButton, QSlider, QVBoxLayout, QWidget)
+from PySide6.QtCore import QStandardPaths, QThread, QUrl, Qt, Signal
+from PySide6.QtGui import QDesktopServices, QKeySequence, QPixmap, QShortcut
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+                               QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSlider,
+                               QVBoxLayout, QWidget)
+
+from . import BACKUP_META_DIR
+from .backup_index import hide_folder
 
 from .device import FolderBackend
 from .importer import scan_folder
@@ -46,6 +51,133 @@ def show_in_folder(path: str) -> None:
     except Exception:
         log.debug("show in folder failed", exc_info=True)
     QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))   # at least open the folder
+
+
+def human_bytes(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit in ("B", "KB") else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+class Favorites:
+    """The favorites list, kept in the backup folder's hidden bookkeeping folder so it travels
+    with the backup. Marking a favorite copies nothing."""
+
+    def __init__(self, root):
+        self.path = os.path.join(root, BACKUP_META_DIR, "favorites.json")
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                self.items = set(json.load(f).get("items", []))
+        except (OSError, ValueError):
+            self.items = set()
+
+    def save(self):
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            hide_folder(os.path.dirname(self.path))
+            with open(self.path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "items": sorted(self.items)}, f, indent=0)
+            os.replace(self.path + ".tmp", self.path)
+        except OSError:
+            log.exception("could not save favorites")
+
+
+class ExportDialog(QDialog):
+    """Where and how to export the favorites; shows the space it will take."""
+
+    def __init__(self, parent, items, backup_root, settings):
+        super().__init__(parent)
+        self.setWindowTitle("Export favorites")
+        self.items, self.backup_root, self.settings = items, backup_root, settings
+        self.total = sum(i.size for i in items)
+        pictures = QStandardPaths.writableLocation(QStandardPaths.PicturesLocation) or os.path.expanduser("~")
+        self.dest = settings.value("export_dir", os.path.join(pictures, "LPT Pro Favorites"))
+        v = QVBoxLayout(self)
+        v.setContentsMargins(20, 18, 20, 16)
+        v.setSpacing(10)
+        head = QLabel(f"Copy your {len(items):,} favorites ({human_bytes(self.total)}) into a separate folder, "
+                      f"for example to upload for a photo book or prints. Your backup isn\u2019t changed, and "
+                      f"favorites already exported before are skipped.")
+        head.setWordWrap(True)
+        v.addWidget(head)
+        row = QHBoxLayout()
+        self.dest_label = QLabel("", objectName="muted")
+        self.dest_label.setWordWrap(True)
+        change = QPushButton("Change\u2026")
+        change.clicked.connect(self._choose)
+        row.addWidget(self.dest_label, 1)
+        row.addWidget(change)
+        v.addLayout(row)
+        self.by_date = QCheckBox("Organize by date (folders by year and month)")
+        self.by_date.setChecked(settings.value("export_by_date", True, type=bool))
+        self.jpeg = QCheckBox("Save HEIC photos as JPEG (most photo-book and print sites need JPEG)")
+        self.jpeg.setChecked(settings.value("export_jpeg", True, type=bool))
+        v.addWidget(self.by_date)
+        v.addWidget(self.jpeg)
+        self.space = QLabel("")
+        self.space.setWordWrap(True)
+        v.addWidget(self.space)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        self.go = QPushButton("Export", objectName="primary")
+        self.go.setDefault(True)
+        self.go.clicked.connect(self._accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.go)
+        v.addLayout(buttons)
+        self.setMinimumWidth(560)
+        self._update()
+
+    def _choose(self):
+        d = QFileDialog.getExistingDirectory(self, "Export favorites to", os.path.dirname(self.dest))
+        if d:
+            self.dest = d
+            self._update()
+
+    def _free(self) -> int | None:
+        probe = self.dest
+        while probe and not os.path.exists(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                break
+            probe = parent
+        try:
+            return shutil.disk_usage(probe).free
+        except OSError:
+            return None
+
+    def _bad_place(self) -> bool:
+        a, b = os.path.abspath(self.dest), os.path.abspath(self.backup_root)
+        try:
+            return os.path.commonpath([a, b]) in (a, b)
+        except ValueError:
+            return False
+
+    def _update(self):
+        self.dest_label.setText(f"Folder:  {self.dest}")
+        free = self._free()
+        if self._bad_place():
+            self.space.setText("\u26a0 That folder is inside (or contains) your backup folder. Pick a "
+                               "folder outside it, so the copies aren\u2019t mistaken for backups.")
+            self.go.setEnabled(False)
+            return
+        if free is not None and free < self.total:
+            self.space.setText(f"\u26a0 Not enough space there: this needs {human_bytes(self.total)}, "
+                               f"and only {human_bytes(free)} is free.")
+            self.go.setEnabled(False)
+            return
+        self.space.setText(f"This makes copies, so it uses up to {human_bytes(self.total)} of extra space"
+                           + (f" ({human_bytes(free)} free on that drive)." if free is not None else "."))
+        self.go.setEnabled(True)
+
+    def _accept(self):
+        self.settings.setValue("export_dir", self.dest)
+        self.settings.setValue("export_by_date", self.by_date.isChecked())
+        self.settings.setValue("export_jpeg", self.jpeg.isChecked())
+        self.accept()
 
 
 class _Scan(QThread):
@@ -96,6 +228,11 @@ class AlbumView(QWidget):
         refresh.setToolTip("Look at the backup folder again (after adding or moving files)")
         refresh.clicked.connect(lambda: self.load(force=True))
         hh.addWidget(refresh)
+        self.export_btn = QPushButton("Export favorites\u2026", objectName="orange")
+        self.export_btn.setToolTip("Copy your favorites into a separate folder (for a photo book or prints)")
+        self.export_btn.clicked.connect(self.export_favorites)
+        self.export_btn.setEnabled(False)
+        hh.addWidget(self.export_btn)
         v.addWidget(head)
 
         bar = QFrame(objectName="filterbar")
@@ -123,6 +260,13 @@ class AlbumView(QWidget):
             box.currentIndexChanged.connect(self.on_filter)
             fh.addWidget(box)
         fh.addSpacing(12)
+        fh.addWidget(QLabel("Show", objectName="muted"))
+        self.show_box = QComboBox()
+        self.show_box.addItem("Everything", "all")
+        self.show_box.addItem("Favorites", "fav")
+        self.show_box.currentIndexChanged.connect(self.on_filter)
+        fh.addWidget(self.show_box)
+        fh.addSpacing(12)
         self.hide_live = QCheckBox("Hide Live Photo videos")
         self.hide_live.toggled.connect(self.on_filter)
         fh.addWidget(self.hide_live)
@@ -143,6 +287,15 @@ class AlbumView(QWidget):
         self.grid.open_item.connect(self.open_item)
         self.grid.setContextMenuPolicy(Qt.CustomContextMenu)
         self.grid.customContextMenuRequested.connect(self._menu)
+        self.grid.star_clicked.connect(lambda it: self.toggle_favorite([it]))
+        self.grid.allow_drag = False
+        shift = getattr(self.window_, "shift", None)
+        if shift is not None:                       # Shift multi-select, as in iPhone mode
+            self.grid.multi = lambda: shift.active
+            self.grid.on_click = shift.note_click
+        self.model.stars = True
+        self.favorites = None
+        QShortcut(QKeySequence("F"), self, activated=self._favorite_key)
         self.empty = QLabel("", objectName="empty")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.hide()
@@ -182,8 +335,13 @@ class AlbumView(QWidget):
                               f" · {self.root}")
         self.model.thumbs.clear()
         self.model.requested.clear()
+        self.favorites = Favorites(self.root)
+        for it in items:
+            if it.path in self.favorites.items:
+                it.extra["fav"] = True
         self._fill_years(items)
         self.model.set_items(items)
+        self._render_fav_count()
         self.on_filter()
         if not items:
             self._message("No photos or videos in the backup folder yet.")
@@ -238,9 +396,11 @@ class AlbumView(QWidget):
         self.model.hide_live = self.hide_live.isChecked()
         self.model.month = self.month_box.currentData() or 0
         self.model.year = self.year_box.currentData() or 0
+        self.model.show = self.show_box.currentData() or "all"
         self.model.rebuild()
         if self.model.items and not self.model.rows:
-            self._message("Nothing matches this filter.")
+            self._message("No favorites yet. Press F (or click the \u2605 on a photo) to mark one."
+                          if self.model.show == "fav" else "Nothing matches this filter.")
         elif self.model.items:
             self.empty.hide()
             self.grid.show()
@@ -284,11 +444,59 @@ class AlbumView(QWidget):
         if row[0] != "i":
             return
         it = row[1]
+        targets = self._targets(it)
         m = QMenu(self)
         m.addAction("Open", lambda: self.open_item(it))
+        fav = all(i.extra.get("fav") for i in targets)
+        label = ("Remove from favorites" if fav else "Add to favorites") + (
+            f"  ({len(targets):,} selected)" if len(targets) > 1 else "") + "\tF"
+        m.addAction(label, lambda: self.toggle_favorite(targets))
         m.addAction("Show in folder", lambda: show_in_folder(self.local(it)))
-        m.addAction("Open in another app", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.local(it))))
         m.exec(self.grid.viewport().mapToGlobal(pos))
+
+    def _targets(self, it=None):
+        """What an action applies to: the selection if `it` is part of it, else just `it`."""
+        sel = [self.model.by_path[p] for p in self.model.selected if p in self.model.by_path]
+        if it is None:
+            if sel:
+                return sel
+            cur = self.model.by_path.get(self.model.current)
+            return [cur] if cur else []
+        return sel if it.path in self.model.selected and sel else [it]
+
+    def _favorite_key(self):
+        targets = self._targets()
+        if targets:
+            self.toggle_favorite(targets)
+
+    def toggle_favorite(self, items):
+        """Mark (or unmark) as favorites. Nothing is copied; the list is saved right away."""
+        if not items or self.favorites is None:
+            return
+        on = not all(i.extra.get("fav") for i in items)
+        for it in items:
+            it.extra["fav"] = on
+            (self.favorites.items.add if on else self.favorites.items.discard)(it.path)
+        self.favorites.save()
+        self._render_fav_count()
+        if self.model.show == "fav":
+            self.on_filter()
+        else:
+            self.model.refresh_all()
+
+    def _render_fav_count(self):
+        n = sum(1 for i in self.model.items if i.extra.get("fav"))
+        self.show_box.setItemText(self.show_box.findData("fav"), f"Favorites ({n:,})")
+        self.export_btn.setEnabled(n > 0)
+        self.export_btn.setText(f"Export {n:,} favorites\u2026" if n else "Export favorites\u2026")
+
+    def export_favorites(self):
+        favs = [i for i in self.model.items if i.extra.get("fav")]
+        if not favs:
+            return
+        d = ExportDialog(self, favs, self.root, self.window_.settings)
+        if d.exec() == QDialog.Accepted:
+            self.window_.start_export(self.device, favs, d.dest, d.by_date.isChecked(), d.jpeg.isChecked())
 
     def open_item(self, it):
         from .preview import PreviewWindow
@@ -298,12 +506,18 @@ class AlbumView(QWidget):
                 items_provider=lambda: [r[1] for r in self.model.rows if r[0] == "i"],
                 local_provider=self.local,
                 open_external=lambda x: QDesktopServices.openUrl(QUrl.fromLocalFile(self.local(x))),
-                on_busy=self._preview_busy)
+                on_busy=self._preview_busy,
+                on_current=self._follow,
+                on_favorite=lambda x: self.toggle_favorite([x]))
         self.preview.device = self.device
         self.preview.show_item(it)
         self.preview.show()
         self.preview.raise_()
         self.preview.activateWindow()
+
+    def _follow(self, it):
+        from .ui import follow_viewer
+        follow_viewer(self.model, self.grid, it)
 
     def _preview_busy(self, busy):
         if self.thumbs:
