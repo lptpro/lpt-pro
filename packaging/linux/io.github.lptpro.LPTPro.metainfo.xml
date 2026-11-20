@@ -38,6 +38,12 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.20.0" date="2026-11-20">
+      <description><p>Add downloaded photos: sorts photos from a folder or zip files (e.g. from iCloud) into the backup by date.</p></description>
+    </release>
+    <release version="0.19.1" date="2026-11-20">
+      <description><p>Deleted photos never flash up; one Show choice (Everything, On this iPhone, Only in iCloud, Not backed up yet).</p></description>
+    </release>
     <release version="0.19.0" date="2026-11-18">
       <description><p>Shows iCloud-only photos with their previews and explains how to get the originals.</p></description>
     </release>

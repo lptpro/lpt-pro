@@ -448,7 +448,7 @@ class CopyWorker(QThread):
             os.fsync(out.fileno())
         dest = self._place(tmp, folder, it.stem + ".JPG", hashlib.sha1(jpeg).digest(), when)
         from .backup_index import local_head_hash
-        self.index.add_converted(it.size, local_head_hash(verified_heic, it.size), dest)
+        self.index.add_converted(it.size, local_head_hash(verified_heic, it.size), dest, it.name)
         return dest
 
     def _unique(self, folder: str, name: str, digest: bytes) -> str | None:
@@ -625,11 +625,11 @@ class LibraryReader(QThread):
             self.done.emit(None, [], f"couldn't be read ({type(e).__name__})")
             return
         missing = lib.not_in(self.paths)
+        self.done.emit(lib, missing, "")
         try:
-            where_they_live(self.device, missing)
+            where_they_live(self.device, missing)       # for the log only, after the results
         except Exception:
             log.debug("library look-around failed", exc_info=True)
-        self.done.emit(lib, missing, "")
 
 
 class CaptureDateReader(QThread):
@@ -748,11 +748,7 @@ class ThumbLoader(QThread):
     prefetch_progress = Signal(int, int)   # done, total
     needs_decode = Signal(object, bool)    # video with no iPhone thumbnail: (item, on screen?)
 
-    # The iPhone keeps its own ready-made thumbnails (seen on iOS 27):
-    #   /PhotoData/Thumbnails/V2/DCIM/162APPLE/IMG_2611.HEIC/5005.JPG          photos (and videos)
-    #   /PhotoData/Thumbnails/VideoKeyFrames/DCIM/100APPLE/IMG_0028.MOV/LocalVideoKeyFrame.jpg
-    PHONE_THUMBS = ("/PhotoData/Thumbnails/V2{path}/5005.JPG",)
-    PHONE_KEYFRAMES = ("/PhotoData/Thumbnails/VideoKeyFrames{path}/LocalVideoKeyFrame.jpg",)
+    # The iPhone keeps its own ready-made thumbnails; photosdb.preview_candidates() lists where.
 
     def __init__(self, device, cache_dir: str):
         super().__init__()
@@ -834,25 +830,22 @@ class ThumbLoader(QThread):
         """The iPhone's own JPEG thumbnail for this item, or None. Read-only."""
         if self._pt_off:
             return None
-        paths = [t.format(path=it.path) for t in self.PHONE_THUMBS]
-        if it.kind == "video":
-            paths += [t.format(path=it.path) for t in self.PHONE_KEYFRAMES]
-            if it.extra.get("live_photo"):   # Live Photo video: its photo's thumbnail
-                paths.append(self.PHONE_THUMBS[0].format(path=it.extra["live_photo"]))
-        for p in paths:
-            try:
-                data = self.device.read_all(p)
-            except DeviceGone:
-                raise
-            except Exception:
-                continue
-            if data:
-                with self._pt_lock:
-                    self._pt_ok += 1
-                    self._pt_from_phone.add(it.path)
-                    if self._pt_ok == 1:
-                        log.info("using the iPhone's own thumbnails (first: %s, %d KB)", p, len(data) // 1024)
-                return data
+        from .photosdb import read_preview
+        try:
+            data, where = read_preview(self.device, it.path, it.kind, it.extra.get("live_photo"),
+                                       look_inside=bool(it.extra.get("library_only")))
+        except DeviceGone:
+            raise
+        if data:
+            with self._pt_lock:
+                self._pt_ok += 1
+                self._pt_from_phone.add(it.path)
+                if self._pt_ok == 1:
+                    log.info("using the iPhone's own thumbnails (first: %s, %d KB)", where, len(data) // 1024)
+                if it.extra.get("library_only") and not getattr(self, "_lib_logged", False):
+                    self._lib_logged = True
+                    log.info("iCloud item previews found (first: %s)", where)
+            return data
         with self._pt_lock:
             self._pt_miss += 1
             self._pt_without.add(it.path)

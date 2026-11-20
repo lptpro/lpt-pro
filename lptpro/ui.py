@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
 
 from . import APP_LONG_NAME, APP_NAME, __version__, settings
 from .backup_index import BackupIndex
+from .device import FolderBackend
 from .jobs import (AuditWorker, BackupWatcher, CaptureDateReader, ConnectAndScan, CopyWorker,
                    LibraryReader, ThumbLoader)
 from . import heic
@@ -70,10 +71,10 @@ class GridModel(QAbstractListModel):
         self.selected: set[str] = set()
         self.thumbs: dict[str, QPixmap] = {}
         self.requested: set[str] = set()
-        self.only_missing = False
+        self.show = "all"         # all | phone | icloud | missing
+        self.waiting = False      # True until it's known which items are in Recently Deleted
         self.hide_live = False
         self.hide_deleted = False
-        self.hide_icloud = False
         self.month = 0      # 0 = all months
         self.year = 0       # 0 = all years
         self.kind = "all"
@@ -88,13 +89,18 @@ class GridModel(QAbstractListModel):
     def visible(self, it: MediaItem) -> bool:
         if self.kind != "all" and it.kind != self.kind:
             return False
-        if self.only_missing and it.backed_up is True:
+        if self.waiting:
+            return False
+        cloud = bool(it.extra.get("cloud"))
+        if self.show == "missing" and (it.backed_up is True or cloud):
+            return False
+        if self.show == "phone" and cloud:
+            return False
+        if self.show == "icloud" and not (cloud and it.backed_up is not True):
             return False
         if self.hide_live and it.extra.get("live"):
             return False
         if self.hide_deleted and it.extra.get("trashed"):
-            return False
-        if self.hide_icloud and it.extra.get("cloud") and it.backed_up is not True:
             return False
         if self.year and it.date.year != self.year:
             return False
@@ -842,11 +848,11 @@ class MainWindow(QMainWindow):
         col.addWidget(self.audit_bar)
         col.addWidget(self.audit_text)
         ah.addLayout(col, 1)
-        self.icloud_btn = QPushButton("Only in iCloud?")
-        self.icloud_btn.setToolTip("Why some photos aren\u2019t on this iPhone, and how to back them up")
-        self.icloud_btn.clicked.connect(self.explain_icloud_library)
-        self.icloud_btn.hide()
-        ah.addWidget(self.icloud_btn)
+        self.add_btn = QPushButton("Add downloaded photos\u2026")
+        self.add_btn.setToolTip("Photos downloaded from iCloud, or from an old phone or camera: LPT Pro copies\n"
+                                "them into your backup folder, sorted by the date each was taken, and skips\n"
+                                "any that are already there. The downloaded files aren\u2019t changed.")
+        self.add_btn.clicked.connect(self.add_downloaded)
         self.library_missing = []          # library items whose originals aren't files on this iPhone
         self.recheck_btn = QPushButton("Recheck")
         self.recheck_btn.clicked.connect(self.start_audit)
@@ -854,6 +860,7 @@ class MainWindow(QMainWindow):
         self.backup_missing_btn.clicked.connect(self.backup_missing)
         self.backup_missing_btn.setEnabled(False)
         ah.addWidget(self.recheck_btn)
+        ah.addWidget(self.add_btn)
         ah.addWidget(self.backup_missing_btn)
         v.addWidget(self.audit)
 
@@ -866,8 +873,15 @@ class MainWindow(QMainWindow):
         sh = QHBoxLayout()            # second row: the show / hide choices
         rows.addLayout(fh)
         rows.addLayout(sh)
-        self.only_missing = QCheckBox("Only show not backed up")
-        self.only_missing.toggled.connect(self.on_filter)
+        self.show_box = QComboBox()
+        for label, key in (("Everything", "all"), ("On this iPhone", "phone"),
+                           ("Only in iCloud", "icloud"), ("Not backed up yet", "missing")):
+            self.show_box.addItem(label, key)
+        self.show_box.setToolTip("Everything: all items.\n"
+                                 "On this iPhone: items stored on the phone (these can be backed up).\n"
+                                 "Only in iCloud: items whose originals are only in iCloud (bring these down from iCloud).\n"
+                                 "Not backed up yet: items on the phone that aren\u2019t in your backup folder.")
+        self.show_box.currentIndexChanged.connect(self.on_filter)
         self.kind_group = QButtonGroup(self)
         for i, (label, key) in enumerate((("All", "all"), ("Photos", "photo"), ("Videos", "video"))):
             b = QPushButton(label, objectName="chip")
@@ -897,7 +911,8 @@ class MainWindow(QMainWindow):
             box.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         fh.addWidget(self.month_box)
         fh.addWidget(self.year_box)
-        sh.addWidget(self.only_missing)
+        sh.addWidget(QLabel("Show", objectName="muted"))
+        sh.addWidget(self.show_box)
         sh.addSpacing(16)
         self.hide_live = QCheckBox("Hide Live Photo videos")
         self.hide_live.setToolTip("The short video half of a Live Photo (same name as a photo, e.g.\n"
@@ -911,15 +926,10 @@ class MainWindow(QMainWindow):
         self.hide_deleted.setToolTip("Photos and videos you deleted on the iPhone stay in its \u201cRecently Deleted\u201d\n"
                                      "album for about 30 days. They're hidden here while this is ticked.")
         self.hide_deleted.setChecked(self.settings.value("hide_deleted", True, type=bool))
-        self.hide_deleted.toggled.connect(lambda v: (self.settings.setValue("hide_deleted", v), self.on_filter()))
+        self.hide_deleted.toggled.connect(lambda v: (self.settings.setValue("hide_deleted", v), self.on_filter(),
+                                                     self._render_icloud_count()))
         sh.addWidget(self.hide_deleted)
         sh.addSpacing(16)
-        self.hide_icloud = QCheckBox("Hide iCloud only")
-        self.hide_icloud.setToolTip("Photos and videos whose full-size original is only in iCloud. The iPhone keeps\n"
-                                    "a small preview of them, but they can\u2019t be copied from the phone.")
-        self.hide_icloud.setChecked(self.settings.value("hide_icloud", False, type=bool))
-        self.hide_icloud.toggled.connect(lambda v: (self.settings.setValue("hide_icloud", v), self.on_filter()))
-        sh.addWidget(self.hide_icloud)
         sh.addStretch(1)
         fh.addStretch(1)
         fh.addWidget(QLabel("Size", objectName="muted"))
@@ -1067,6 +1077,8 @@ class MainWindow(QMainWindow):
         self.dates_label.hide()
         self.dates_reader = None
         self.deleted_reader = None
+        self._after_library_started = False
+        self._scan_no = 0
         self._pv_tick = QTimer(self, interval=500)     # keep the count fresh while loading
         self._pv_tick.timeout.connect(lambda: self._render_pv())
         self._pv_hide = QTimer(self, singleShot=True, interval=4000)
@@ -1279,13 +1291,20 @@ class MainWindow(QMainWindow):
         self.model.thumbs.clear()
         self.model.requested.clear()
         n_photo = sum(1 for i in items if i.kind == "photo")
+        # Until it's known which items are in Recently Deleted, show nothing (when they're to be
+        # hidden), so a deleted photo never flashes up on screen.
+        self.model.waiting = bool(items) and self.hide_deleted.isChecked()
         self.model.set_items(items)
-        self._show_empty("" if items else "No photos or videos found on this iPhone.")
+        self.rebuild_grid()
+        if not items:
+            self._show_empty("No photos or videos found on this iPhone.")
         self.set_status(f"{len(items):,} items on iPhone · {n_photo:,} photos · {len(items) - n_photo:,} videos")
         self.start_audit()
-        self._start_prefetch(items)
-        self._start_dates(items)
-        self._start_deleted()
+        self._after_library_started = False
+        self._scan_no += 1
+        self._start_deleted()          # first: the previews and dates wait for it (see _after_library)
+        no = self._scan_no             # safety net if the phone never answers
+        QTimer.singleShot(180_000, lambda: no == self._scan_no and self._after_library())
 
     # -- audit ----------------------------------------------------------------
     def make_index(self):
@@ -1331,7 +1350,7 @@ class MainWindow(QMainWindow):
     def on_audit_done(self):
         self.update_audit_summary(final=True)
         self._match_library_items()
-        if self.only_missing.isChecked():
+        if self.model.show != "all":
             self.rebuild_grid()
 
     def _skips_deleted(self, it) -> bool:
@@ -1370,6 +1389,7 @@ class MainWindow(QMainWindow):
         unchecked = len(items) - checked
         checking = bool(self.audit_worker and self.audit_worker.isRunning()) and unchecked > 0
         self.backup_missing_btn.setEnabled(bool(todo) and not self.copying and self.connected)
+        self.add_btn.setEnabled(not self.copying)
         if not todo:
             self.backup_missing_btn.setText("All backed up")
             self.backup_missing_btn.setToolTip("")
@@ -1382,15 +1402,15 @@ class MainWindow(QMainWindow):
             self.backup_missing_btn.setText(f"Back up the {len(missing):,} missing · "
                                             f"{human_bytes(sum(i.size for i in missing))}")
             self.backup_missing_btn.setToolTip("")
+        self._render_icloud_count()
 
     # -- grid -----------------------------------------------------------------
     def on_filter(self, *_):
         b = self.kind_group.checkedButton()
         self.model.kind = b.property("kind") if b else "all"
-        self.model.only_missing = self.only_missing.isChecked()
+        self.model.show = self.show_box.currentData() or "all"
         self.model.hide_live = self.hide_live.isChecked()
         self.model.hide_deleted = self.hide_deleted.isChecked()
-        self.model.hide_icloud = self.hide_icloud.isChecked()
         self.model.month = self.month_box.currentData() or 0
         self.model.year = self.year_box.currentData() or 0
         self.hide_live.setVisible(self.model.kind != "photo")
@@ -1400,8 +1420,12 @@ class MainWindow(QMainWindow):
         self.model.rebuild()
         if not self.model.items:
             return
-        if not self.model.rows:
-            self._show_empty("Everything here is backed up ✓" if self.model.only_missing else "Nothing matches this filter.")
+        if self.model.waiting:
+            self._show_empty("Getting ready\u2026  (checking which photos are in Recently Deleted)")
+        elif not self.model.rows:
+            self._show_empty({"missing": "Everything on this iPhone is backed up \u2713",
+                              "icloud": "Nothing here is only in iCloud \u2713"}.get(
+                                  self.model.show, "Nothing matches this filter."))
         else:
             self._show_empty("")
 
@@ -1431,7 +1455,6 @@ class MainWindow(QMainWindow):
         self.hide_deleted.setText("Hide Recently Deleted")
         self.hide_deleted.setEnabled(True)
         self.library_missing = []
-        self.icloud_btn.hide()
         r = LibraryReader(self.device, [i.path for i in self.model.items])
         r.done.connect(self._on_deleted)
         self.deleted_reader = r
@@ -1459,8 +1482,19 @@ class MainWindow(QMainWindow):
         if paths is not None:
             self.hide_deleted.setText(f"Hide Recently Deleted ({n:,})")
         self._render_icloud_count()
+        self._after_library()
+
+    def _after_library(self):
+        """The Photos library has been read (or couldn't be): show the grid, then prepare
+        previews and dates, which had waited so the library read went first."""
+        self.model.waiting = False
         self.on_filter()
         self.update_audit_summary(final=not (self.audit_worker and self.audit_worker.isRunning()))
+        if self._after_library_started or not self.model.items:
+            return
+        self._after_library_started = True
+        self._start_prefetch(self.model.items)
+        self._start_dates([i for i in self.model.items if not i.extra.get("library_only")])
 
     def _add_library_items(self, assets):
         """Items in the Photos library whose originals aren't files on this iPhone: shown with
@@ -1512,8 +1546,16 @@ class MainWindow(QMainWindow):
 
     def _render_icloud_count(self):
         n = len(self._icloud_items())
-        self.hide_icloud.setText(f"Hide iCloud only ({n:,})" if n else "Hide iCloud only")
-        self.icloud_btn.setVisible(n > 0)
+        items = self.model.items
+        hidden = self.hide_deleted.isChecked()
+        items = [i for i in items if not (hidden and i.extra.get("trashed"))]   # match what's shown
+        on_phone = sum(1 for i in items if not i.extra.get("cloud"))
+        missing = sum(1 for i in items if i.backed_up is False and not i.extra.get("cloud")
+                      and not self._skips_deleted(i))
+        for key, label, count in (("phone", "On this iPhone", on_phone), ("icloud", "Only in iCloud", n),
+                                  ("missing", "Not backed up yet", missing)):
+            idx = self.show_box.findData(key)
+            self.show_box.setItemText(idx, f"{label} ({count:,})" if items else label)
 
     # -- dates taken ---------------------------------------------------------------
     def _start_dates(self, items):
@@ -1835,7 +1877,7 @@ class MainWindow(QMainWindow):
         if gone:
             names = ", ".join(gone[:3]) + (f" and {len(gone) - 3:,} more" if len(gone) > 3 else "")
             self.set_status(f"No longer on the PC: {names}. Marked as not backed up.")
-            if self.only_missing.isChecked():
+            if self.model.show != "all":
                 self.rebuild_grid()
         self.update_audit_summary(final=True)
 
@@ -1906,7 +1948,7 @@ class MainWindow(QMainWindow):
         self.copy_worker = None
         self._pause_prefetch(False)
         self._apply_backup_root()
-        if self.only_missing.isChecked():
+        if self.model.show != "all":
             self.rebuild_grid()
         self.update_copy_button()
         self.update_audit_summary(final=True)
@@ -1943,6 +1985,10 @@ class MainWindow(QMainWindow):
 
     def _stop_phone_work(self):
         self.vthumbs.stop()
+        self._scan_no += 1
+        if self.model.waiting:
+            self.model.waiting = False
+            self.rebuild_grid()
         if self.deleted_reader is not None:
             try:
                 self.deleted_reader.done.disconnect()
@@ -2005,6 +2051,119 @@ class MainWindow(QMainWindow):
             self.set_status("The iPhone was unplugged. Nothing on it was changed. Plug it back in to continue.")
         self.retry_timer.start()
 
+    # -- adding downloaded photos -----------------------------------------------------
+    def add_downloaded(self):
+        if self.copying:
+            QMessageBox.information(self, "Copy in progress", "A copy is already running. It\u2019ll be ready for more when it finishes.")
+            return
+        if not self.backup_root or not os.path.isdir(self.backup_root):
+            self.choose_backup_root()
+            if not self.backup_root:
+                return
+        n_cloud = len(self._icloud_items())
+        box = QMessageBox(self)
+        box.setWindowTitle("Add downloaded photos")
+        box.setIcon(QMessageBox.Information)
+        box.setText("Got photos from iCloud, an old phone or a camera? LPT Pro copies them into your "
+                    "backup folder, sorted by the date each one was taken. Every copy is checked, and "
+                    "photos already in your backup are skipped. The downloaded files aren\u2019t changed."
+                    + (f"\n\n{n_cloud:,} photos on this iPhone are only in iCloud. Once you\u2019ve added "
+                       f"them here, they\u2019re marked ON PC." if n_cloud else ""))
+        folder_b = box.addButton("Choose a folder\u2026", QMessageBox.AcceptRole)
+        zips_b = box.addButton("Choose zip files\u2026", QMessageBox.AcceptRole)
+        how_b = box.addButton("How do I download from iCloud?", QMessageBox.HelpRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(folder_b)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is how_b:
+            self.explain_icloud_library()
+        elif clicked is folder_b:
+            src = QFileDialog.getExistingDirectory(self, "Folder with the downloaded photos")
+            if src:
+                self._import_folder(src)
+        elif clicked is zips_b:
+            files, _ = QFileDialog.getOpenFileNames(self, "Zip files with the downloaded photos", "",
+                                                    "Zip files (*.zip)")
+            if files:
+                self._import_zips(files)
+
+    def _import_folder(self, src):
+        from .importer import _inside, scan_folder
+        if _inside(src, self.backup_root) or _inside(self.backup_root, src):
+            QMessageBox.information(self, "Add downloaded photos",
+                                    "That folder is (or contains) your backup folder. Pick the folder "
+                                    "with the downloaded photos instead.")
+            return
+        self.set_status("Looking for photos and videos in that folder\u2026")
+        QApplication.processEvents()
+        items = scan_folder(src, self.backup_root)
+        self._start_import(FolderBackend(src), items, src, src)
+
+    def _import_zips(self, files):
+        from .importer import ZipSource
+        try:
+            source = ZipSource(files)
+        except Exception as e:
+            QMessageBox.warning(self, "Add downloaded photos", f"Couldn\u2019t open the zip file:\n{e}")
+            return
+        self._start_import(source, source.items(), os.path.dirname(files[0]), ", ".join(source.names))
+
+    def _start_import(self, source, items, folder, label):
+        if not items:
+            QMessageBox.information(self, "Add downloaded photos", f"No photos or videos were found in {label}.")
+            return
+        log.info("adding %d downloaded items from %s", len(items), label)
+        w = CopyWorker(source, self.make_index(), items, self.backup_root, self.template.currentText(),
+                       set_dates=self.opt_dates.isChecked(), include_aae=False, skip_backed_up=True,
+                       heic_to_jpeg=self.opt_jpeg.isChecked(), keep_heic=self.opt_keep_heic.isChecked())
+        w.progress.connect(self.on_copy_progress)
+        w.item_failed.connect(lambda path, why: log.warning("add failed %s: %s", path, why))
+        w.note.connect(self.show_note)
+        w.finished_all.connect(lambda c, s, f, x: self._on_import_finished(source, folder, c, s, f, x))
+        self.copy_worker = w
+        self.progress.show()
+        self.pause_btn.show()
+        self.cancel_btn.show()
+        self.pause_btn.setText("Pause")
+        self.update_copy_button()
+        self.backup_missing_btn.setEnabled(False)
+        self.add_btn.setEnabled(False)
+        w.start()
+        self._pause_prefetch(True)
+
+    def _on_import_finished(self, source, folder, copied, skipped, failed, cancelled):
+        self.progress.hide()
+        self.pause_btn.hide()
+        self.cancel_btn.hide()
+        self.speed_label.setText("")
+        self.setWindowTitle(APP_NAME)
+        self.copy_worker = None
+        self.add_btn.setEnabled(True)
+        if hasattr(source, "close") and not isinstance(source, FolderBackend):
+            source.close()
+        self._pause_prefetch(False)
+        parts = [f"{copied:,} added and verified"]
+        if skipped:
+            parts.append(f"{skipped:,} were already in your backup")
+        if failed:
+            parts.append(f"{failed:,} failed (see the log)")
+        self.set_status(("Stopped — " if cancelled else "Done — ") + ", ".join(parts))
+        self._apply_backup_root()
+        # what was just added may be photos the iPhone only has in iCloud: recognise them
+        if getattr(self, "_index", None) is not None:
+            self._index.build()
+            self._match_library_items()
+        self.update_copy_button()
+        self.update_audit_summary(final=True)
+        QApplication.alert(self)
+        if not cancelled:
+            self._show_done(copied, skipped, 0, failed,
+                            note=("All of them are safely in your backup now. You can delete the "
+                                  "downloaded files if you like." if not failed else
+                                  "Keep the downloaded files until the failed ones are sorted out."),
+                            folder=folder)
+
     def explain_icloud_library(self):
         n = len(self._icloud_items())
         win = sys.platform == "win32"
@@ -2016,8 +2175,8 @@ class MainWindow(QMainWindow):
                f"1.  On this PC, go to icloud.com/photos and sign in.\n"
                f"2.  Select the photos (click one, then Shift-click another to select a range).\n"
                f"3.  Click Download and choose \u201cUnmodified Original\u201d.\n"
-               f"4.  Save them into your backup folder, then press Recheck here. "
-               f"LPT Pro recognises them and marks them ON PC.\n"
+               f"4.  Back in LPT Pro, press \u201cAdd downloaded photos\u2026\u201d and pick the "
+               f"download folder. LPT Pro sorts them into your backup and marks them ON PC.\n"
                + ("\nOr install Apple\u2019s free iCloud for Windows app, which can download the whole "
                   "library to this PC.\n" if win else "")
                + "\nIf your iPhone has lots of free space, you can also switch it to Settings \u2192 "
@@ -2090,12 +2249,16 @@ class MainWindow(QMainWindow):
                                     f"Nothing on the iPhone was changed.")
         e.accept()
 
-    def _show_done(self, copied, skipped, cloud, failed):
+    def _show_done(self, copied, skipped, cloud, failed, note=None, folder=None):
         """Big 'Done!' card when a copy finishes, readable from across the room."""
         from PySide6.QtWidgets import QDialog
         old = getattr(self, "_done_card", None)
+        self._done_card = None
         if old is not None:
-            old.close()
+            try:
+                old.close()
+            except RuntimeError:
+                pass                     # already closed (and deleted) by OK
         ok = not failed
         d = QDialog(self, Qt.Dialog | Qt.FramelessWindowHint)
         d.setObjectName("doneCard")
@@ -2120,8 +2283,10 @@ class MainWindow(QMainWindow):
         if cloud:
             lines.append(f"{cloud:,} only in iCloud (not on this iPhone)")
         if failed:
-            lines.append(f"{failed:,} couldn’t be copied – see Problems")
-        else:
+            lines.append(f"{failed:,} couldn’t be copied" + (" – see the log" if note else " – see Problems"))
+        if note:
+            lines.append(note)
+        elif not failed:
             lines.append("Nothing on the iPhone was changed.")
         text = QLabel("\n".join(lines), objectName="doneText")
         text.setAlignment(Qt.AlignCenter)
@@ -2133,10 +2298,14 @@ class MainWindow(QMainWindow):
         v.addSpacing(14)
         row = QHBoxLayout()
         row.addStretch(1)
-        if failed:
+        if failed and not note:
             prob = QPushButton("View problems", objectName="orange")
             prob.clicked.connect(lambda: (d.close(), self.show_problems()))
             row.addWidget(prob)
+        if folder:
+            show = QPushButton("Show downloaded folder")
+            show.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(folder)))
+            row.addWidget(show)
         okb = QPushButton("OK", objectName="primary")
         okb.setMinimumWidth(110)
         okb.setDefault(True)
@@ -2148,6 +2317,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(("✓ Done – " if ok else "Done – ") + APP_NAME)
         d.finished.connect(lambda *_: self.copying or self.setWindowTitle(APP_NAME))
         self._done_card = d
+        d.destroyed.connect(lambda *_: getattr(self, "_done_card", None) is d and setattr(self, "_done_card", None))
         d.adjustSize()
         d.move(self.geometry().center() - d.rect().center())
         d.open()

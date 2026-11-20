@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.20.0
+- **Add downloaded photos…** (next to Recheck): pick a folder or zip files, for example a
+  download from iCloud, and LPT Pro copies them into the backup folder sorted by date,
+  verified, skipping any already there. The source files are never changed. iCloud-only
+  items that were added are marked ON PC.
+- Photos saved as JPEG are still recognised by their original name.
+- Fixed: the "Done!" card could fail to appear after an earlier one was closed.
+
+## 0.19.1
+- Privacy: with "Hide Recently Deleted" ticked, nothing is shown until LPT Pro knows which
+  photos are deleted, so they never flash up on screen. The deleted list is read first.
+- One "Show" choice replaces two checkboxes: Everything, On this iPhone, Only in iCloud,
+  Not backed up yet (each with a count).
+- iCloud previews are found in more places; items without a "date taken" use the date they
+  were added to the library.
+
 ## 0.19.0
 - Photos and videos that are only in iCloud now appear in the grid with the iPhone's own
   preview and their real name and date, tagged iCLOUD ONLY. "Hide iCloud only" hides them.

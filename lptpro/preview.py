@@ -96,18 +96,11 @@ class PreviewLoader(QThread):
 
     def _icloud_preview(self) -> QImage:
         """The small preview the iPhone keeps of an item whose original is only in iCloud."""
-        from .jobs import ThumbLoader
-        paths = [t.format(path=self.item.path) for t in ThumbLoader.PHONE_THUMBS + ThumbLoader.PHONE_KEYFRAMES]
-        for p in paths:
-            try:
-                data = self.device.read_all(p)
-            except DeviceGone:
-                raise
-            except Exception:
-                continue
-            q = QImage.fromData(data)
-            if not q.isNull():
-                return q
+        from .photosdb import read_preview
+        data, _where = read_preview(self.device, self.item.path, self.item.kind, look_inside=True)
+        q = QImage.fromData(data) if data else QImage()
+        if not q.isNull():
+            return q
         raise RuntimeError("The iPhone has no preview of this item; its original is only in iCloud.")
 
     def _bytes(self) -> bytes:

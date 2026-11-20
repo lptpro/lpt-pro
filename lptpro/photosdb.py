@@ -327,7 +327,7 @@ def read_library(dev) -> Library:
             raise Unavailable("the iPhone's Photos library has an unknown layout")
         idx = lambda c: cols.index(c) if c in cols else None
         i_state, i_tdate, i_kind, i_hidden = idx("ZTRASHEDSTATE"), idx("ZTRASHEDDATE"), idx("ZKIND"), idx("ZHIDDEN")
-        i_created, i_dur = idx("ZDATECREATED"), idx("ZDURATION")
+        i_created, i_dur, i_added = idx("ZDATECREATED"), idx("ZDURATION"), idx("ZADDEDDATE")
         if i_state is None and i_tdate is None:
             raise Unavailable("the iPhone's Photos library has an unknown layout")
         assets, total, by_pk = [], 0, {}
@@ -339,7 +339,10 @@ def read_library(dev) -> Library:
                 continue
             trashed = get(i_state) == 1 if i_state is not None else get(i_tdate) is not None
             kind = {0: "photo", 1: "video"}.get(get(i_kind))
-            a = Asset(d, n, kind, trashed, get(i_hidden) == 1, get(i_created), get(i_dur))
+            created = get(i_created)
+            if not isinstance(created, (int, float)):
+                created = get(i_added)            # no "date taken": when it was added to the library
+            a = Asset(d, n, kind, trashed, get(i_hidden) == 1, created, get(i_dur))
             assets.append(a)
             by_pk[pk] = a
         # the original file name and size (used to recognise copies downloaded from iCloud)
@@ -370,6 +373,61 @@ def read_library(dev) -> Library:
         r.close()
 
 
+def preview_candidates(path: str, kind: str = "photo", live_photo: str | None = None) -> list[str]:
+    """Where the iPhone may keep its own small preview of an item (most likely first).
+
+    Camera-roll items:  /PhotoData/Thumbnails/V2/DCIM/100APPLE/IMG_0001.HEIC/5005.JPG
+    iCloud items:       /PhotoData/Thumbnails/V2/PhotoData/CPLAssets/group1/<ID>.HEIC/5005.JPG
+    """
+    roots = [path]
+    if not path.upper().startswith("/PHOTODATA/") and not path.upper().startswith("/DCIM/"):
+        roots.append("/PhotoData" + path)        # library folders may be stored without the prefix
+    out = [f"/PhotoData/Thumbnails/V2{r}/5005.JPG" for r in roots]
+    if kind == "video":
+        out += [f"/PhotoData/Thumbnails/VideoKeyFrames{r}/LocalVideoKeyFrame.jpg" for r in roots]
+        if live_photo:
+            out.append(f"/PhotoData/Thumbnails/V2{live_photo}/5005.JPG")
+    return out
+
+
+def preview_folders(path: str) -> list[str]:
+    """Folders to look inside when the usual preview file name isn't there."""
+    roots = [path]
+    if not path.upper().startswith("/PHOTODATA/") and not path.upper().startswith("/DCIM/"):
+        roots.append("/PhotoData" + path)
+    return [f"/PhotoData/Thumbnails/V2{r}" for r in roots]
+
+
+def read_preview(dev, path: str, kind: str = "photo", live_photo: str | None = None,
+                 look_inside: bool = False) -> tuple[bytes | None, str | None]:
+    """(JPEG bytes, where it was found) of the iPhone's own preview, or (None, None)."""
+    for p in preview_candidates(path, kind, live_photo):
+        try:
+            data = dev.read_all(p)
+        except Exception as e:
+            if type(e).__name__ == "DeviceGone":
+                raise
+            continue
+        if data:
+            return data, p
+    if look_inside:
+        for folder in preview_folders(path):
+            try:
+                names = [n for n in dev.listdir(folder) if n.upper().endswith((".JPG", ".JPEG"))]
+            except Exception as e:
+                if type(e).__name__ == "DeviceGone":
+                    raise
+                continue
+            for n in sorted(names, reverse=True):          # 5005 > 5003: the larger ones first
+                try:
+                    data = dev.read_all(f"{folder}/{n}")
+                except Exception:
+                    continue
+                if data:
+                    return data, f"{folder}/{n}"
+    return None, None
+
+
 def recently_deleted(dev) -> set[str]:
     """Upper-case phone paths ("/DCIM/100APPLE/IMG_0001.HEIC") of items in Recently Deleted."""
     return read_library(dev).trashed
@@ -389,9 +447,18 @@ def where_they_live(dev, assets: list[Asset], sample: int = 40) -> list[str]:
         found = [s for s in stats if s is not None]
         real = [s for s in found if (s.blocks is None or s.blocks > 0) and s.size > 0]
         kinds = {k: sum(1 for a in items if a.kind == k) for k in ("photo", "video")}
+        where, n_prev = {}, 0
+        for a in some[:10]:
+            data, at = read_preview(dev, a.phone_path, a.kind or "photo", look_inside=True)
+            if data:
+                n_prev += 1
+                key = at.replace(a.phone_path, "{item}") if a.phone_path in at else at.rsplit("/", 2)[0] + "/…"
+                where[key] = where.get(key, 0) + 1
+        example = f"; e.g. {some[0].directory}/{some[0].name[:8]}…" if some else ""
         lines.append(f"{top}: {len(items):,} items ({kinds['photo']:,} photos, {kinds['video']:,} videos); "
                      f"of {len(some)} checked, {len(found)} have a file on the iPhone, {len(real)} with the "
-                     f"full original stored")
+                     f"full original stored; previews found for {n_prev} of {min(10, len(some))}"
+                     + (f" at {', '.join(where)}" if where else "") + example)
     for ln in lines:
         log.info("library outside the camera roll: %s", ln)
     return lines

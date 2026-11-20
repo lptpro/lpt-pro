@@ -104,7 +104,7 @@ class BackupIndex:
         for root in self.roots:
             for key, val in self._read_ledger(root).items():
                 size, _, h = key.partition(":")
-                e = dict(val) if isinstance(val, dict) else {"path": val}   # 0.2-0.5 stored a bare path
+                e = dict(val) if isinstance(val, dict) else {"path": val}   # older format: a bare path
                 e["path"] = os.path.join(root, e["path"])
                 converted.setdefault(int(size), {})[h] = e
         with self._lock:
@@ -135,13 +135,16 @@ class BackupIndex:
         except Exception:
             return {}
 
-    def add_converted(self, phone_size: int, phone_head_hash: bytes, local_path: str) -> None:
+    def add_converted(self, phone_size: int, phone_head_hash: bytes, local_path: str,
+                      original_name: str | None = None) -> None:
         p = os.path.abspath(local_path)
         try:
             jsize = os.path.getsize(p)
             entry = {"path": p, "size": jsize, "head": local_head_hash(p, jsize).hex()}
         except OSError:
             entry = {"path": p}
+        if original_name:
+            entry["name"] = original_name      # lets iCloud-only items find their JPEG by name
         with self._lock:
             self.converted.setdefault(phone_size, {})[phone_head_hash.hex()] = entry
             self._ledger_dirty = True
@@ -242,6 +245,11 @@ class BackupIndex:
         for p in candidates:
             if self._stem_key(p) == key and os.path.isfile(p):
                 return p
+        with self._lock:
+            conv = list(self.converted.get(size, {}).values())
+        for e in conv:                          # saved as JPEG: the record knows the original name
+            if e.get("name") and self._stem_key(e["name"]) == key and os.path.isfile(e["path"]):
+                return e["path"]
         return None
 
     def find_match(self, size: int, phone_head_hash) -> str | None:
