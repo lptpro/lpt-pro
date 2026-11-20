@@ -45,6 +45,8 @@ python -m lptpro --demo /path/to/folder          # a folder with DCIM/100APPLE/.
 | `lptpro/jobs.py` | worker threads: connect + scan, backup check, copy (temp `.part` → verify → move), tiles, dates taken, backup-folder watcher |
 | `lptpro/heic.py` | HEIF container reader (rotation, colour profile, EXIF, embedded thumbnail); decoding through WIC on Windows, pillow-heif on Linux; HEIC → JPEG |
 | `lptpro/videothumbs.py` | video tiles for videos without an iPhone thumbnail: a seekable `QIODevice` over the phone + `QMediaPlayer` slots |
+| `lptpro/album.py` | Album mode: the backup folder as a browsable grid (FolderBackend + the same tiles and viewer), "Show in folder" |
+| `lptpro/importer.py` | "Add downloaded photos": a folder or zip files fed to the copy engine (ZipSource) |
 | `lptpro/preview.py` | viewer window: photo zoom/pan, video player (Qt Quick display, `video.qml`) |
 | `lptpro/ui.py` | main window, grid, selection, folder tree, problems list, setup card, Done card, style sheet |
 

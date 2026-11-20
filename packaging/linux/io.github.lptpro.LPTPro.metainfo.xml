@@ -18,6 +18,7 @@
       <li>Sorted into folders by the date each photo was taken, original dates kept</li>
       <li>Optionally saves HEIC photos as JPEG</li>
       <li>Built-in photo viewer and video player</li>
+      <li>Album mode: browse your backup by year and month, no iPhone needed</li>
       <li>Honest about photos whose original is only in iCloud</li>
       <li>Never changes or deletes anything on the iPhone, and never uses the internet</li>
     </ul>
@@ -38,6 +39,12 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.21.0" date="2026-11-20">
+      <description><p>Album mode: browse the backup on the PC without the iPhone.</p></description>
+    </release>
+    <release version="0.20.1" date="2026-11-20">
+      <description><p>Backs up library photos stored outside the camera roll; Shared with You no longer counted.</p></description>
+    </release>
     <release version="0.20.0" date="2026-11-20">
       <description><p>Add downloaded photos: sorts photos from a folder or zip files (e.g. from iCloud) into the backup by date.</p></description>
     </release>

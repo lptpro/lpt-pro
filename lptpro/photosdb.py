@@ -304,7 +304,27 @@ class Library:
     def not_in(self, paths_on_phone: set[str]) -> list[Asset]:
         """Library items (not deleted) that aren't among these camera-roll files."""
         return [a for a in self.assets if not a.trashed and a.path not in paths_on_phone
-                and "CLOUDSHARING" not in a.directory.upper()]      # Shared Albums aren't the library
+                and not _not_library(a.directory)]
+
+
+def _not_library(directory: str) -> bool:
+    """Items listed in the Photos library that aren't part of it: Shared Albums, and
+    "Shared with You" photos from Messages (kept in one-character folders like "5" or "D")."""
+    d = directory.strip("/")
+    return "CLOUDSHARING" in d.upper() or ("/" not in d and len(d) <= 2)
+
+
+def split_on_phone(dev, assets: list["Asset"]) -> tuple[list[tuple["Asset", object]], list["Asset"]]:
+    """Library items outside the camera roll whose full original IS stored on the iPhone (these
+    can be backed up like any other) versus those that are only in iCloud."""
+    on_phone, cloud = [], []
+    stats = dev.stat_many([a.phone_path for a in assets]) if assets else []
+    for a, st in zip(assets, stats):
+        if st is not None and not st.is_dir and st.size > 0 and (st.blocks is None or st.blocks > 0):
+            on_phone.append((a, st))
+        else:
+            cloud.append(a)
+    return on_phone, cloud
 
 
 def read_library(dev) -> Library:

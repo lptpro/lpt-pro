@@ -26,6 +26,7 @@ from dataclasses import dataclass
 
 
 log = logging.getLogger("transfer")
+KEEP_ALIVE_S = 60          # while idle, one tiny request this often keeps the connection open
 
 
 class DeviceError(Exception):
@@ -101,6 +102,7 @@ class AfcBackend:
         if self._afc is not None and self._lost:
             coro.close()
             raise DeviceGone("The iPhone was disconnected.")
+        self._last_use = time.monotonic()
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
         try:
             return fut.result(timeout)
@@ -121,6 +123,8 @@ class AfcBackend:
     def _mark_lost(self):
         if self._afc is not None and not self._lost:
             self._lost = True
+            idle = time.monotonic() - getattr(self, "_last_use", time.monotonic())
+            log.info("iPhone connection ended (last request %.0f s before)", idle)
             cb = self.on_disconnect
             if cb:
                 try:
@@ -186,6 +190,22 @@ class AfcBackend:
             raise DeviceError(f"Couldn’t connect to the iPhone: {type(e).__name__}: {e}")
 
         asyncio.run_coroutine_threadsafe(_watch(self._afc), self._loop)
+
+        async def _keep_alive(afc):
+            # A tiny request about once a minute while nothing else is happening, so the
+            # iPhone doesn't close a connection it thinks is unused.
+            while self._afc is afc and not self._lost:
+                await asyncio.sleep(KEEP_ALIVE_S)
+                if self._afc is not afc or self._lost:
+                    return
+                if time.monotonic() - getattr(self, "_last_use", 0) < KEEP_ALIVE_S * 0.8:
+                    continue
+                try:
+                    await asyncio.wait_for(afc.stat("/"), 20)
+                except Exception:
+                    pass        # a real loss is reported by the watcher above
+
+        asyncio.run_coroutine_threadsafe(_keep_alive(self._afc), self._loop)
         info = self._lockdown.short_info
         self.name = info.get("DeviceName") or "iPhone"
         self.ios = info.get("ProductVersion") or ""

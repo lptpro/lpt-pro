@@ -613,7 +613,7 @@ class LibraryReader(QThread):
 
     def run(self):
         background_priority()
-        from .photosdb import Unavailable, read_library, where_they_live
+        from .photosdb import Unavailable, read_library, split_on_phone, where_they_live
         try:
             lib = read_library(self.device)
         except Unavailable as e:
@@ -625,7 +625,15 @@ class LibraryReader(QThread):
             self.done.emit(None, [], f"couldn't be read ({type(e).__name__})")
             return
         missing = lib.not_in(self.paths)
-        self.done.emit(lib, missing, "")
+        try:
+            on_phone, cloud = split_on_phone(self.device, missing)
+        except Exception:
+            log.warning("checking library files failed", exc_info=True)
+            on_phone, cloud = [], missing
+        log.info("library items outside the camera roll: %d stored on the iPhone, %d only in iCloud; "
+                 "%d Shared Album / Shared with You items left out", len(on_phone), len(cloud),
+                 sum(1 for a in lib.assets if not a.trashed and a.path not in self.paths) - len(missing))
+        self.done.emit(lib, (on_phone, cloud), "")
         try:
             where_they_live(self.device, missing)       # for the log only, after the results
         except Exception:

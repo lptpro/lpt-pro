@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.21.0
+- **Album mode** (iPhone | Album, top bar): browse the backup folder without the iPhone,
+  by year and month, with the same viewer and video player. Right-click a photo for
+  "Show in folder", which opens the file manager with that file selected. Previews are
+  kept so later visits are instant.
+- The connection to the iPhone is kept alive while nothing is happening, so it doesn't
+  drop after sitting idle. The log notes when and why a connection ended.
+
+## 0.20.1
+- Library photos whose originals are stored on the iPhone outside the camera roll are now
+  backed up (under their real names) instead of being counted as "only in iCloud".
+- "Shared with You" photos from Messages are no longer counted as part of the library.
+- Removed the "Include edit files (.AAE)" option (those files only mean something to Apple's
+  Photos app).
+- A plain explanation when the iPhone refuses to hand over a photo ("permission denied").
+
 ## 0.20.0
 - **Add downloaded photos…** (next to Recheck): pick a folder or zip files, for example a
   download from iCloud, and LPT Pro copies them into the backup folder sorted by date,

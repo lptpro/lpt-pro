@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
                                QFileDialog, QFileSystemModel, QFrame, QHBoxLayout, QLabel, QListView,
                                QMainWindow, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSlider,
                                QSplitter, QStyle, QStyledItemDelegate, QTreeView, QVBoxLayout, QWidget,
-                               QLineEdit, QAbstractSpinBox, QDialog)
+                               QLineEdit, QAbstractSpinBox, QDialog, QStackedWidget)
 
 from . import APP_LONG_NAME, APP_NAME, __version__, settings
 from .backup_index import BackupIndex
@@ -661,6 +661,10 @@ def plain_reason(raw: str) -> str:
                 "if it keeps happening, restart the iPhone.")
     if "object_not_found" in r or "no such file" in r and "dcim" in r:
         return "The file is no longer on the iPhone (it may have been deleted)."
+    if "perm_denied" in r:
+        return ("The iPhone refused to hand this one over. That happens when its Photos app is still "
+                "working on it (an edit, or syncing). Open it once in Photos on the iPhone, or restart "
+                "the iPhone, then try again.")
     if "no space" in r or "errno 28" in r or "disk full" in r:
         return "The PC’s drive is full. Free some space, then try again."
     if "permission" in r or "access is denied" in r or "errno 13" in r or "being used by another process" in r:
@@ -823,6 +827,19 @@ class MainWindow(QMainWindow):
         th.addWidget(self.device_label)
         th.addWidget(self.retry_btn)
         th.addWidget(self.disconnect_btn)
+        th.addSpacing(12)
+        self.mode_group = QButtonGroup(self)
+        for label, key, tip in (("iPhone", "phone", "What\u2019s on the iPhone, and backing it up"),
+                                ("Album", "album", "Browse your backup on this PC (no iPhone needed)")):
+            b = QPushButton(label, objectName="chip")
+            b.setCheckable(True)
+            b.setChecked(key == "phone")
+            b.setProperty("mode", key)
+            b.setToolTip(tip)
+            self.mode_group.addButton(b)
+            th.addWidget(b)
+        self.mode_group.buttonClicked.connect(lambda b: self.switch_mode(b.property("mode")))
+        self.album = None
         self.problems_btn = QPushButton("", objectName="problems")
         self.problems_btn.setToolTip("Files that couldn’t be copied, and why")
         self.problems_btn.clicked.connect(self.show_problems)
@@ -862,7 +879,13 @@ class MainWindow(QMainWindow):
         ah.addWidget(self.recheck_btn)
         ah.addWidget(self.add_btn)
         ah.addWidget(self.backup_missing_btn)
-        v.addWidget(self.audit)
+        phone_page = QWidget()
+        pl = QVBoxLayout(phone_page)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.setSpacing(0)
+        self.pages = QStackedWidget()
+        self.pages.addWidget(phone_page)
+        pl.addWidget(self.audit)
 
         # filter row
         bar = QFrame(objectName="filterbar")
@@ -945,7 +968,7 @@ class MainWindow(QMainWindow):
         clear.clicked.connect(self.model.clear_selection)
         fh.addWidget(sel_all)
         fh.addWidget(clear)
-        v.addWidget(bar)
+        pl.addWidget(bar)
 
         # grid + right panel
         split = QSplitter(Qt.Horizontal)
@@ -1019,14 +1042,12 @@ class MainWindow(QMainWindow):
         self.opt_skip_deleted = QCheckBox("Skip Recently Deleted")
         self.opt_skip_deleted.setToolTip("\u201cBack up what\u2019s missing\u201d leaves out photos and videos that are in the\n"
                                          "iPhone's Recently Deleted album. Items you select yourself are always copied.")
-        self.opt_aae = QCheckBox("Include edit files (.AAE)")
         self.opt_jpeg = QCheckBox("Save HEIC photos as JPEG")
         self.opt_keep_heic = QCheckBox("   …and keep the original HEIC too")
         self.opt_keep_heic.setToolTip("The JPEG is for everyday use. The HEIC is the untouched original "
                                       "from the phone (full quality, HDR, depth).")
         for cb, key, default in ((self.opt_dates, "opt_dates", True), (self.opt_pairs, "opt_pairs", True),
                                  (self.opt_skip, "opt_skip", True), (self.opt_skip_deleted, "opt_skip_deleted", True),
-                                 (self.opt_aae, "opt_aae", False),
                                  (self.opt_jpeg, "opt_jpeg", True), (self.opt_keep_heic, "opt_keep_heic", False)):
             cb.setChecked(self.settings.value(key, default, type=bool))
             cb.toggled.connect(lambda val, k=key: self.settings.setValue(k, val))
@@ -1044,7 +1065,8 @@ class MainWindow(QMainWindow):
         panel.setMaximumWidth(380)
         split.addWidget(panel)
         split.setStretchFactor(0, 1)
-        v.addWidget(split, 1)
+        pl.addWidget(split, 1)
+        v.addWidget(self.pages, 1)
 
         # status bar
         sb = QFrame(objectName="statusbar")
@@ -1112,6 +1134,10 @@ class MainWindow(QMainWindow):
         self.grid.setVisible(not text)
 
     def _apply_backup_root(self):
+        if getattr(self, "album", None) is not None:
+            self.album.stale = True                  # the backup changed: look again next time
+            if self.pages.currentWidget() is self.album:
+                self.album.load()
         if self.backup_root and os.path.isdir(self.backup_root):
             self.backup_btn.setText(self.backup_root)
             self.dest_label.setText(self.backup_root)
@@ -1350,6 +1376,7 @@ class MainWindow(QMainWindow):
     def on_audit_done(self):
         self.update_audit_summary(final=True)
         self._match_library_items()
+        self._run_extra_audit()
         if self.model.show != "all":
             self.rebuild_grid()
 
@@ -1464,7 +1491,8 @@ class MainWindow(QMainWindow):
         if self.sender() is not self.deleted_reader:
             return                                   # from an earlier connection
         paths = lib.trashed if lib is not None else None
-        self._add_library_items(missing)
+        on_phone, cloud = missing if lib is not None else ([], [])
+        self._add_library_items(cloud, on_phone)
         for it in self.model.items:
             it.extra.pop("trashed", None)
         if paths is None:
@@ -1496,14 +1524,24 @@ class MainWindow(QMainWindow):
         self._start_prefetch(self.model.items)
         self._start_dates([i for i in self.model.items if not i.extra.get("library_only")])
 
-    def _add_library_items(self, assets):
-        """Items in the Photos library whose originals aren't files on this iPhone: shown with
-        the iPhone's preview and tagged iCLOUD ONLY (they can't be copied from the phone)."""
+    def _add_library_items(self, assets, on_phone=()):
+        """Items in the Photos library outside the camera roll. Those whose original is stored on
+        the iPhone are backed up like any other; the rest are shown with the iPhone's preview and
+        tagged iCLOUD ONLY (they can't be copied from the phone)."""
         from .media import kind_of
-        if not assets:
+        if not assets and not on_phone:
             return
         known = {i.path.upper() for i in self.model.items}
-        new = []
+        new, stored = [], []
+        for a, st in on_phone:
+            if a.path in known:
+                continue
+            name = a.original_name or a.name
+            kind = a.kind or kind_of(name) or "photo"
+            it = MediaItem(path=a.phone_path, name=name, size=st.size, date=a.date or st.mtime, kind=kind)
+            it.extra["library"] = True
+            stored.append(it)
+        new += stored
         for a in assets:
             if a.path in known:
                 continue
@@ -1517,11 +1555,29 @@ class MainWindow(QMainWindow):
             new.append(it)
         if not new:
             return
-        log.info("showing %d library items whose originals are only in iCloud", len(new))
+        log.info("showing %d library items: %d stored on the iPhone, %d only in iCloud",
+                 len(new), len(stored), len(new) - len(stored))
         items = sorted(self.model.items + new, key=lambda x: (x.date, x.name), reverse=True)
         self._fill_years(items)
         self.model.set_items(items)
         self._match_library_items()
+        if stored:
+            self._extra_audit = getattr(self, "_extra_audit", []) + stored
+            self._run_extra_audit()
+
+    def _run_extra_audit(self):
+        """Check items found after the main backup check started (once it has finished)."""
+        pending = getattr(self, "_extra_audit", [])
+        if not pending or (self.audit_worker and self.audit_worker.isRunning()):
+            return
+        if not self.backup_root or not os.path.isdir(self.backup_root):
+            return
+        self._extra_audit = []
+        w = AuditWorker(self.device, self.make_index(), pending)
+        w.results.connect(self.on_audit_results)
+        w.finished_ok.connect(self.on_audit_done)
+        self.audit_worker = w
+        w.start()
 
     def _match_library_items(self):
         """Recognise iCloud-only items already in the backup folder (same name and size),
@@ -1812,7 +1868,7 @@ class MainWindow(QMainWindow):
             return
         w = CopyWorker(self.device, self.make_index(), items, dest_root,
                        template or self.template.currentText(),
-                       set_dates=self.opt_dates.isChecked(), include_aae=self.opt_aae.isChecked(),
+                       set_dates=self.opt_dates.isChecked(), include_aae=False,
                        skip_backed_up=self.opt_skip.isChecked() or force_skip,
                        heic_to_jpeg=self.opt_jpeg.isChecked(),
                        keep_heic=self.opt_keep_heic.isChecked())
@@ -2202,6 +2258,26 @@ class MainWindow(QMainWindow):
         box = QMessageBox(QMessageBox.Warning, "iPhone unplugged", msg, QMessageBox.Ok, self)
         box.open()
 
+    def switch_mode(self, mode):
+        """iPhone mode (what's on the phone, backing up) or Album mode (the backup on this PC)."""
+        if mode == "album":
+            if self.album is None:
+                from .album import AlbumView
+                self.album = AlbumView(self, GridModel, GridView, TileDelegate, self.data_dir)
+                self.pages.addWidget(self.album)
+            self.pages.setCurrentWidget(self.album)
+            if not self.copying:
+                self._pause_prefetch(True)          # the album gets the PC's attention
+            self.album.load()
+        else:
+            if self.album is not None:
+                self.album.pause()
+            self.pages.setCurrentIndex(0)
+            if not self.copying:
+                self._pause_prefetch(False)
+        for b in self.mode_group.buttons():
+            b.setChecked(b.property("mode") == mode)
+
     def closeEvent(self, e):
         if self.copying:
             r = QMessageBox.question(self, "Copy in progress",
@@ -2215,6 +2291,8 @@ class MainWindow(QMainWindow):
 
         # 1. ask everything to stop at once, then wait for all of it together
         step("Stopping background work…")
+        if self.album is not None:
+            self.album.shutdown()
         if self.copying:
             self.copy_worker.cancel()
         for w in (self.audit_worker, self.scan_worker, self.dates_reader):
