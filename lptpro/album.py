@@ -556,7 +556,7 @@ class AlbumView(QWidget):
         if self.thumbs:
             self.thumbs.pause_prefetch(busy)
         if self.vthumbs:
-            self.vthumbs.pause(busy)
+            self.vthumbs.pause(busy)          # no second video decoder while one plays
         if self.dates:
             self.dates.pause(busy)
 

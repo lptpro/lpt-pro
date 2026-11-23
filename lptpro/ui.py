@@ -1823,8 +1823,11 @@ class MainWindow(QMainWindow):
         self.multi_label.setVisible(self.shift.active)
 
     def _preview_busy(self, playing: bool):
-        """While a video plays, background thumbnail work waits, so playback stays smooth."""
-        self.thumbs.pause(playing)
+        """While a video plays, playback comes first: background preview work waits, and no
+        other video is decoded. Tiles you scroll to that are quick to make (photos, videos with
+        a ready-made preview) still appear."""
+        background_paused = playing or self.copying or self.pages.currentIndex() != 0
+        self.thumbs.pause_prefetch(background_paused)
         self.vthumbs.pause(playing)
         if self.audit_worker and self.audit_worker.isRunning():
             self.audit_worker.pause(playing)

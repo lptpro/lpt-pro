@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.2
+- While a video plays, tiles you scroll to still appear when they're quick to make (photos,
+  and videos with a ready-made preview). Playback still comes first: nothing else that would
+  decode a video runs until the video is paused or closed.
+
 ## 0.23.1
 - Fixed: a video tile could show a picture from a different video (a late frame from the video
   made just before it). Album previews are made fresh once after updating.
