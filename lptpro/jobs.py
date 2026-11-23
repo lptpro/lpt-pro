@@ -146,7 +146,7 @@ class AuditWorker(QThread):
                 self._go.wait()   # paused while a video plays
                 try:
                     if it.extra.get("cloud"):
-                        match = self.index.find_by_name_size(it.name, it.size)
+                        match = self.index.find_icloud(it.name, it.size, it.date)
                     else:
                         match = self.index.find_match(it.size, lambda it=it: self.device.head_hash(it.path, it.size))
                 except DeviceGone:
@@ -157,7 +157,7 @@ class AuditWorker(QThread):
                 except Exception as e:
                     if is_not_on_phone(e, it):      # only in iCloud: compare by name and size
                         it.extra["cloud"] = True
-                        match = self.index.find_by_name_size(it.name, it.size)
+                        match = self.index.find_icloud(it.name, it.size, it.date)
                     else:
                         log.exception("audit failed for %s", it.path)
                         match = None
@@ -582,7 +582,7 @@ class BackupWatcher(QThread):
         for phone_path, (local, size, item) in missing:
             try:
                 if item.extra.get("cloud"):     # nothing on the phone to compare with
-                    match = index.find_by_name_size(item.name, item.size)
+                    match = index.find_icloud(item.name, item.size, item.date)
                 else:
                     match = index.find_match(size, lambda it=item: self.device.head_hash(it.path, it.size))
             except Exception:

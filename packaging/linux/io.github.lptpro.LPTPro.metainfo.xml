@@ -39,6 +39,12 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.23.0" date="2026-11-23">
+      <description><p>Better adding from synced iCloud folders; iCloud photos recognised whatever their file name.</p></description>
+    </release>
+    <release version="0.22.1" date="2026-11-21">
+      <description><p>Clear favorites button.</p></description>
+    </release>
     <release version="0.22.0" date="2026-11-20">
       <description><p>Favorites and Export favorites in Album mode; the grid follows the viewer.</p></description>
     </release>

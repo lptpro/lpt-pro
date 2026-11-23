@@ -228,6 +228,11 @@ class AlbumView(QWidget):
         refresh.setToolTip("Look at the backup folder again (after adding or moving files)")
         refresh.clicked.connect(lambda: self.load(force=True))
         hh.addWidget(refresh)
+        self.clear_btn = QPushButton("Clear favorites")
+        self.clear_btn.setToolTip("Remove all the stars (no photos are deleted)")
+        self.clear_btn.clicked.connect(self.clear_favorites)
+        self.clear_btn.setEnabled(False)
+        hh.addWidget(self.clear_btn)
         self.export_btn = QPushButton("Export favorites\u2026", objectName="orange")
         self.export_btn.setToolTip("Copy your favorites into a separate folder (for a photo book or prints)")
         self.export_btn.clicked.connect(self.export_favorites)
@@ -488,7 +493,33 @@ class AlbumView(QWidget):
         n = sum(1 for i in self.model.items if i.extra.get("fav"))
         self.show_box.setItemText(self.show_box.findData("fav"), f"Favorites ({n:,})")
         self.export_btn.setEnabled(n > 0)
+        self.clear_btn.setEnabled(n > 0)
         self.export_btn.setText(f"Export {n:,} favorites\u2026" if n else "Export favorites\u2026")
+
+    def clear_favorites(self):
+        favs = [i for i in self.model.items if i.extra.get("fav")]
+        if not favs or self.favorites is None:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Clear favorites")
+        box.setIcon(QMessageBox.Question)
+        box.setText(f"Clear all {len(favs):,} favorites?\n\nThis only removes the stars. No photos are "
+                    f"deleted, and copies you already exported stay where they are.")
+        clear = box.addButton("Clear", QMessageBox.DestructiveRole)
+        box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Cancel)
+        box.exec()
+        if box.clickedButton() is not clear:
+            return
+        for it in favs:
+            it.extra["fav"] = False
+        self.favorites.items.clear()
+        self.favorites.save()
+        self._render_fav_count()
+        if self.model.show == "fav":
+            self.on_filter()
+        else:
+            self.model.refresh_all()
 
     def export_favorites(self):
         favs = [i for i in self.model.items if i.extra.get("fav")]

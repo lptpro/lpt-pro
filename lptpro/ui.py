@@ -1658,7 +1658,7 @@ class MainWindow(QMainWindow):
         for it in self.model.items:
             if not it.extra.get("library_only") or it.backed_up is True:
                 continue
-            match = index.find_by_name_size(it.name, it.size) if (index and it.size) else None
+            match = index.find_icloud(it.name, it.size, it.date) if (index and it.size) else None
             if match:
                 self._mark_on_pc(it, match)
             else:
@@ -2225,7 +2225,55 @@ class MainWindow(QMainWindow):
         self.set_status("Looking for photos and videos in that folder\u2026")
         QApplication.processEvents()
         items = scan_folder(src, self.backup_root)
-        self._start_import(FolderBackend(src), items, src, src)
+        from .importer import looks_like_cloud_folder
+        previews = [i for i in items if i.extra.get("cloud_state") == "preview"]
+        cloud = bool(previews) or looks_like_cloud_folder(src)
+        free_after = False
+        if cloud and items:
+            go, free_after = self._confirm_cloud_import(len(items), len(previews))
+            if not go:
+                self.set_status("")
+                return
+        self._start_import(FolderBackend(src), items, src, src, cloud=cloud, free_after=free_after)
+
+    def _confirm_cloud_import(self, n_all, n_prev):
+        """Before adding from a folder that's synced with a cloud service (e.g. iCloud Photos)."""
+        box = QDialog(self)
+        box.setWindowTitle("Add from a synced folder")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(20, 18, 20, 16)
+        v.setSpacing(10)
+        n_local = n_all - n_prev
+        text = (f"{n_all:,} photos and videos in this folder: {n_local:,} are fully on this PC"
+                + (f", and {n_prev:,} are previews whose originals are still in iCloud. Those are "
+                   f"downloaded one by one as LPT Pro copies them, so this can take a while (it depends "
+                   f"on your internet connection)." if n_prev else "."))
+        t = QLabel(text)
+        t.setWordWrap(True)
+        v.addWidget(t)
+        warn = QLabel("\u26a0 This folder is synced with the cloud. LPT Pro only reads it. Don\u2019t delete "
+                      "files there in File Explorer: that can delete them from iCloud and the iPhone too.")
+        warn.setWordWrap(True)
+        warn.setObjectName("doneWarn")
+        v.addWidget(warn)
+        free = QCheckBox("After copying, free up the space again on the files LPT Pro downloads\n"
+                         "(they stay in iCloud; files you keep on this PC aren\u2019t touched)")
+        free.setChecked(True)
+        free.setVisible(n_prev > 0)
+        v.addWidget(free)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(box.reject)
+        go = QPushButton("Start", objectName="primary")
+        go.setDefault(True)
+        go.clicked.connect(box.accept)
+        row.addWidget(cancel)
+        row.addWidget(go)
+        v.addLayout(row)
+        box.setMinimumWidth(560)
+        ok = box.exec() == QDialog.Accepted
+        return ok, ok and n_prev > 0 and free.isChecked()
 
     def _import_zips(self, files):
         from .importer import ZipSource
@@ -2236,14 +2284,25 @@ class MainWindow(QMainWindow):
             return
         self._start_import(source, source.items(), os.path.dirname(files[0]), ", ".join(source.names))
 
-    def _start_import(self, source, items, folder, label):
+    def _start_import(self, source, items, folder, label, cloud=False, free_after=False):
         if not items:
             QMessageBox.information(self, "Add downloaded photos", f"No photos or videos were found in {label}.")
             return
-        log.info("adding %d downloaded items from %s", len(items), label)
+        log.info("adding %d downloaded items from %s%s", len(items), label,
+                 " (synced folder; freeing space afterwards)" if free_after else " (synced folder)" if cloud else "")
+        on_done = None
+        if free_after:
+            from .importer import free_up_space
+            previews = {i.path for i in items if i.extra.get("cloud_state") == "preview"}
+            self._freed = 0
+
+            def on_done(path, local):
+                if path in previews and free_up_space(os.path.join(folder, path.lstrip("/"))):
+                    self._freed += 1
         self._start_copy_job(source, items, folder, self.backup_root, self.make_index(),
                              self.template.currentText(), self.opt_jpeg.isChecked(),
-                             self.opt_keep_heic.isChecked(), "import")
+                             self.opt_keep_heic.isChecked(), "import-cloud" if cloud else "import",
+                             on_done=on_done)
 
     def start_export(self, source, items, dest, organize, jpeg):
         """Album mode: copy favorites to a separate folder (for a photo book or prints)."""
@@ -2257,11 +2316,14 @@ class MainWindow(QMainWindow):
         self._start_copy_job(source, items, dest, dest, index,
                              self.template.currentText() if organize else "No subfolders", jpeg, False, "export")
 
-    def _start_copy_job(self, source, items, folder, dest_root, index, template, jpeg, keep_heic, kind):
+    def _start_copy_job(self, source, items, folder, dest_root, index, template, jpeg, keep_heic, kind,
+                        on_done=None):
         w = CopyWorker(source, index, items, dest_root, template,
                        set_dates=self.opt_dates.isChecked(), include_aae=False, skip_backed_up=True,
                        heic_to_jpeg=jpeg, keep_heic=keep_heic)
         w.progress.connect(self.on_copy_progress)
+        if on_done is not None:
+            w.item_done.connect(on_done)
         w.item_failed.connect(lambda path, why: log.warning("%s failed %s: %s", kind, path, why))
         w.note.connect(self.show_note)
         w.finished_all.connect(lambda c, s, f, x: self._on_import_finished(source, folder, c, s, f, x, kind))
@@ -2314,11 +2376,20 @@ class MainWindow(QMainWindow):
         self.update_audit_summary(final=True)
         QApplication.alert(self)
         if not cancelled:
-            self._show_done(copied, skipped, 0, failed,
-                            note=("All of them are safely in your backup now. You can delete the "
-                                  "downloaded files if you like." if not failed else
-                                  "Keep the downloaded files until the failed ones are sorted out."),
-                            folder=folder)
+            if kind == "import-cloud":
+                freed = getattr(self, "_freed", 0)
+                note = ("All of them are safely in your backup now." if not failed else
+                        "Some couldn\u2019t be added; see the log.")
+                note += ("\nDon\u2019t delete the files in that folder in File Explorer: it\u2019s synced, "
+                         "so that can delete them from iCloud and the iPhone too. To get the space back, "
+                         "right-click the folder \u2192 Free up space.")
+                if freed:
+                    note += f"\n{freed:,} downloaded files were given back to iCloud (space freed)."
+            else:
+                note = ("All of them are safely in your backup now. You can delete the "
+                        "downloaded files if you like." if not failed else
+                        "Keep the downloaded files until the failed ones are sorted out.")
+            self._show_done(copied, skipped, 0, failed, note=note, folder=folder)
 
     def explain_icloud_library(self):
         n = len(self._icloud_items())

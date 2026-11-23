@@ -252,6 +252,47 @@ class BackupIndex:
                 return e["path"]
         return None
 
+    _FAMILY = {".jpeg": ".jpg", ".heif": ".heic", ".hif": ".heic", ".m4v": ".mp4", ".tiff": ".tif"}
+
+    @classmethod
+    def _family(cls, name: str) -> str:
+        ext = os.path.splitext(name)[1].lower()
+        return cls._FAMILY.get(ext, ext)
+
+    @staticmethod
+    def _same_moment(path: str, when) -> bool:
+        """The file's date (LPT Pro sets it to the date taken) matches `when`: exactly, or off by
+        whole quarter hours (a different time zone), up to a day."""
+        try:
+            diff = abs(os.path.getmtime(path) - when.timestamp())
+        except (OSError, ValueError, OverflowError, AttributeError):
+            return False
+        if diff > 26 * 3600:
+            return False
+        r = diff % 900
+        return r <= 2 or r >= 898
+
+    def find_icloud(self, name: str, size: int, when=None) -> str | None:
+        """An iCloud-only item in the backup: same name and size, or (whatever the file is called,
+        e.g. after a download from iCloud) the same exact size, file type and date taken."""
+        if not size:
+            return None
+        hit = self.find_by_name_size(name, size)
+        if hit or when is None:
+            return hit
+        fam = self._family(name)
+        with self._lock:
+            candidates = list(self.by_size.get(size, ()))
+            conv = list(self.converted.get(size, {}).values())
+        for p in candidates:
+            if self._family(p) == fam and os.path.isfile(p) and self._same_moment(p, when):
+                return p
+        for e in conv:                       # saved as JPEG: the record keeps the original's size
+            p = e.get("path", "")
+            if fam in (".heic",) and os.path.isfile(p) and self._same_moment(p, when):
+                return p
+        return None
+
     def find_match(self, size: int, phone_head_hash) -> str | None:
         """phone_head_hash is a callable so the phone is only asked when needed."""
         with self._lock:

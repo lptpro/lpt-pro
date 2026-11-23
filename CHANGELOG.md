@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.23.0
+- Adding from a folder synced with iCloud for Windows (or a similar service): LPT Pro says how
+  many files are fully on the PC and how many are previews still in iCloud, downloads those
+  one by one as it copies them, and can "Free up space" on them afterwards (they stay in
+  iCloud; files you keep on the PC aren't touched). The folder itself is only read.
+- When the folder is synced, the "Done!" card warns not to delete files there in File
+  Explorer (that can delete them from iCloud and the iPhone too) and explains Free up space.
+- iCloud-only items are recognised in the backup even when the downloaded file has a
+  different name (matched by exact size, file type and date taken), also after saving as JPEG.
+
+## 0.22.1
+- **Clear favorites** (Album mode, between Refresh and Export): removes all the stars after
+  asking first. No photos are deleted, and exported copies stay.
+
 ## 0.22.0
 - **Favorites** in Album mode: press F, click the ★ on a tile, or right-click → Add to
   favorites (works on a whole selection). Show → Favorites lists them. The list is kept in

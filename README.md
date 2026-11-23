@@ -100,7 +100,10 @@ everything is in place.
   - **icloud.com/photos**: select up to 1,000 at a time, **Download → Unmodified Original**.
   - On Windows, Apple's free **iCloud for Windows** app.
 
-  Then press **Add downloaded photos…** and pick the folder or the zip files. LPT Pro copies
+  Then press **Add downloaded photos…** and pick the folder or the zip files. With iCloud for
+  Windows you can pick its iCloud Photos folder directly: previews are downloaded as they're
+  copied, and their space can be freed again afterwards. Don't delete files in that synced
+  folder yourself: that can delete them from iCloud too. LPT Pro copies
   them into your backup, sorted by date, checks every copy, skips any already there, and
   marks them **ON PC**. The downloaded files aren't changed; delete them afterwards if you like.
 - **Photos from an old phone, a camera or another backup?** *Add downloaded photos…* sorts

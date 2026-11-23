@@ -17,6 +17,49 @@ from .device import HASH_HEAD, Stat
 from .media import MediaItem, kind_of
 
 
+# Windows "files on demand" (used by iCloud for Windows and similar): a file can be a
+# placeholder that only downloads its content when opened.
+_OFFLINE = 0x1000
+_RECALL_ON_OPEN = 0x40000
+_PINNED = 0x80000
+_UNPINNED = 0x100000
+_RECALL_ON_DATA_ACCESS = 0x400000
+
+
+def cloud_state(path: str) -> str:
+    """"preview" (placeholder: the original is still in the cloud), "kept" (always kept on this
+    device), or "local". Only looks at the file's attributes, so nothing is downloaded."""
+    try:
+        attrs = os.stat(path).st_file_attributes        # Windows only
+    except (OSError, AttributeError):
+        return "local"
+    if attrs & (_RECALL_ON_DATA_ACCESS | _RECALL_ON_OPEN | _OFFLINE):
+        return "preview"
+    return "kept" if attrs & _PINNED else "local"
+
+
+def free_up_space(path: str) -> bool:
+    """Windows "Free up space" for one file: the cloud copy stays, the PC copy goes back to
+    being a preview. The same as right-click -> Free up space; nothing is deleted anywhere."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        attrs = k32.GetFileAttributesW(str(path))
+        if attrs == 0xFFFFFFFF:
+            return False
+        return bool(k32.SetFileAttributesW(str(path), (attrs | _UNPINNED) & ~_PINNED))
+    except Exception:
+        return False
+
+
+def looks_like_cloud_folder(path: str) -> bool:
+    """A folder kept in sync with a cloud service (deleting there deletes in the cloud too)."""
+    parts = [x.lower().replace(" ", "") for x in os.path.abspath(path).replace("\\", "/").split("/")]
+    return any(x.startswith(("icloudphotos", "iclouddrive", "onedrive")) for x in parts)
+
+
 def _inside(path: str, folder: str) -> bool:
     try:
         return os.path.commonpath([os.path.abspath(path), os.path.abspath(folder)]) == os.path.abspath(folder)
@@ -42,8 +85,12 @@ def scan_folder(root: str, backup_root: str | None = None) -> list[MediaItem]:
             except OSError:
                 continue
             rel = "/" + os.path.relpath(full, root).replace(os.sep, "/")
-            items.append(MediaItem(path=rel, name=f, size=st.st_size,
-                                   date=dt.datetime.fromtimestamp(st.st_mtime), kind=kind))
+            it = MediaItem(path=rel, name=f, size=st.st_size,
+                           date=dt.datetime.fromtimestamp(st.st_mtime), kind=kind)
+            state = cloud_state(full)
+            if state != "local":
+                it.extra["cloud_state"] = state
+            items.append(it)
     return items
 
 
