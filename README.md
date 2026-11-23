@@ -10,29 +10,43 @@ Free and open source, for Windows and Linux.</p>
   <a href="https://github.com/lptpro/lpt-pro/releases/latest/download/LPT-Pro-Linux.deb"><b>⬇ Download for Linux</b></a>
 </p>
 
-<p align="center"><img src="docs/screenshot-main.png" width="900" alt="LPT Pro showing the photos on an iPhone, which ones are already on the PC, and the Back up what's missing button"></p>
+<p align="center"><img src="docs/screenshot-main.png" width="900" alt="LPT Pro in iPhone mode: the photos on an iPhone, which ones are already on the PC, and the Back up what's missing button"></p>
+<p align="center"><img src="docs/screenshot-album.png" width="900" alt="LPT Pro in Album mode: browsing the backup on the PC, with favorites marked by a star"></p>
 
 ---
 
 ## What it does
 
-- Shows everything on your iPhone in a fast grid, grouped by the day it was taken.
-- Tells you exactly what is **already backed up** on your PC and what isn't, by checking
-  the files themselves (renamed or re-sorted copies still count).
-- **Back up what's missing** with one button, sorted into folders by year and month.
-- Every copy is **verified** before it counts. A file that doesn't match is thrown away
-  and reported, never kept half-copied.
-- Keeps the original dates and photo details. HEIC photos can be saved as JPEG.
-- Plays videos and opens photos full size, straight from the phone.
-- **Album mode**: browse your whole backup on the PC, no iPhone needed. Pick a year and
-  month, open photos and videos, and right-click **Show in folder** to jump to the file.
-- **Favorites**: press **F** (or click the ★) on photos you love, then **Export favorites…**
-  copies just those into a separate folder, by date or all together, as JPEG if you like.
-  Handy for a photo book or prints. Marking favorites copies nothing until you export.
-- Recognises photos in the iPhone's **Recently Deleted** album and leaves them out by
-  default, so a pile of deleted screenshots doesn't get backed up.
-- Is honest about photos whose full-size original is **only in iCloud** (the iPhone
-  setting "Optimize iPhone Storage"), so you never think something is backed up when it isn't.
+**Back up your iPhone**
+- See everything on your iPhone in a fast grid, grouped by the day each photo was taken.
+- Know exactly what's **already on your PC** and what isn't. LPT Pro checks the files
+  themselves, so renamed or re-sorted copies still count.
+- **Back up what's missing** with one button, sorted into Year / Month folders.
+- Every copy is **verified** before it counts. A file that doesn't match is thrown away and
+  reported, never kept half-copied.
+- Original dates and photo details are kept. HEIC photos can be saved as JPEG.
+- **Show** just what you need: everything, what's on this iPhone, what's only in iCloud, or
+  what isn't backed up yet.
+
+**Honest about what's really on the phone**
+- Photos whose full-size original is **only in iCloud** ("Optimize iPhone Storage") are shown
+  with the iPhone's preview and clearly tagged, so you never think they're backed up when
+  they aren't. LPT Pro tells you how to get them.
+- Photos in **Recently Deleted** are hidden and skipped by default, so a pile of deleted
+  screenshots doesn't get backed up (and never flashes up on screen).
+
+**Bring in photos from elsewhere**
+- **Add downloaded photos…** sorts a folder or zip files (from iCloud, an old phone, a camera
+  or another backup) into your backup by date, skipping anything already there.
+- Works directly with the **iCloud Photos folder of iCloud for Windows**: previews are
+  downloaded as they're copied, and their space can be freed again afterwards.
+
+**Enjoy your backup**
+- **Album mode**: browse the whole backup on your PC, no iPhone needed. Pick a year and
+  month, open photos and play videos, right-click **Show in folder** to jump to the file.
+- **Favorites**: press **F** (or click the ★), then **Export favorites…** copies just those
+  into a separate folder, by date or all together, as JPEG if you like. Handy for a photo
+  book or prints. Marking favorites copies nothing until you export.
 
 ## What it never does
 
