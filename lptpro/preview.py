@@ -479,6 +479,7 @@ class PreviewWindow(QWidget):
             self.player.durationChanged.connect(self._on_duration)
             self.player.playbackStateChanged.connect(self._on_state)
             self.player.errorOccurred.connect(self._on_error)
+            self.player.tracksChanged.connect(self._pick_audio)
         # big arrows on the left and right sides (beside the picture, never covering it)
         stage = QHBoxLayout()
         stage.setContentsMargins(0, 0, 0, 0)
@@ -839,6 +840,29 @@ class PreviewWindow(QWidget):
         self._stats_start()
         self.player.setSource(QUrl.fromLocalFile(path))
         self.player.play()
+
+    def _pick_audio(self):
+        """Play a sound track the player can actually decode. Newer iPhones add a "spatial
+        audio" track first that ordinary decoders can't play (silence); the normal stereo
+        track is usually next to it."""
+        if not self.player:
+            return
+        from PySide6.QtMultimedia import QMediaFormat, QMediaMetaData
+        tracks = self.player.audioTracks()
+        name = self.item.name if self.item else "?"
+        if not tracks:
+            log.info("audio: %s has no sound track", name)
+            return
+        codecs = [t.value(QMediaMetaData.Key.AudioCodec) for t in tracks]
+        playable = [i for i, c in enumerate(codecs)
+                    if c is not None and c != QMediaFormat.AudioCodec.Unspecified]
+        aac = [i for i in playable if codecs[i] == QMediaFormat.AudioCodec.AAC]
+        best = (aac or playable or [None])[0]
+        label = lambda c: getattr(c, "name", str(c)) if c is not None else "unknown"
+        log.info("audio: %s has %d sound track(s): %s; playing %s", name, len(tracks),
+                 ", ".join(label(c) for c in codecs), "none" if best is None else f"track {best + 1}")
+        if best is not None and best != self.player.activeAudioTrack():
+            self.player.setActiveAudioTrack(best)
 
     # -- player ------------------------------------------------------------------
     def toggle_play(self):

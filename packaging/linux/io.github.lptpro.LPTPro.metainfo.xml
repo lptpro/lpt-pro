@@ -39,6 +39,9 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.23.1" date="2026-11-23">
+      <description><p>Fixes wrong video tile pictures and silent videos with several sound tracks.</p></description>
+    </release>
     <release version="0.23.0" date="2026-11-23">
       <description><p>Better adding from synced iCloud folders; iCloud photos recognised whatever their file name.</p></description>
     </release>

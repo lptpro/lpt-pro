@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.23.1
+- Fixed: a video tile could show a picture from a different video (a late frame from the video
+  made just before it). Album previews are made fresh once after updating.
+- Videos with more than one sound track (newer iPhones add a "spatial audio" track that common
+  players can't decode) now play the track that works, instead of playing silence. The log
+  lists each video's sound tracks.
+
 ## 0.23.0
 - Adding from a folder synced with iCloud for Windows (or a similar service): LPT Pro says how
   many files are fully on the PC and how many are previews still in iCloud, downloads those

@@ -206,7 +206,9 @@ class AlbumView(QWidget):
         self.dates = None
         self.preview = None
         self.stale = True
-        self.cache_dir = os.path.join(data_dir, "album-previews")
+        # "-2": previews made before 0.23.1 could show a frame of the wrong video; start fresh
+        self.cache_dir = os.path.join(data_dir, "album-previews-2")
+        shutil.rmtree(os.path.join(data_dir, "album-previews"), ignore_errors=True)
         self.model = model_cls()
         self._build(view_cls, delegate_cls)
 

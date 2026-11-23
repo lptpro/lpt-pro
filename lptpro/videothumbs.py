@@ -115,8 +115,33 @@ class _Slot:
         self.player = QMediaPlayer(owner)        # no audio output -> silent
         self.sink = QVideoSink(owner)
         self.player.setVideoSink(self.sink)
-        self.sink.videoFrameChanged.connect(lambda f: owner._on_frame(self, f), Qt.QueuedConnection)
-        self.player.errorOccurred.connect(lambda *_: owner._finish(self, None))
+        # Each video started in this slot gets a new number. Frames and errors arrive later
+        # (queued), so one from the previous video must never be taken for the current one.
+        self.gen = 0
+        self.owner = owner
+        self._on_frame_fn = None
+        self._on_error_fn = None
+
+    def arm(self):
+        """Called when a new video starts in this slot: only its own frames and errors count.
+        It also gets a brand-new video sink, so no picture left over from the previous video
+        can be delivered for it."""
+        self.gen += 1
+        g = self.gen
+        for sig, fn in ((self.sink.videoFrameChanged, self._on_frame_fn),
+                        (self.player.errorOccurred, self._on_error_fn)):
+            if fn is not None:
+                try:
+                    sig.disconnect(fn)
+                except (RuntimeError, TypeError):
+                    pass
+        old, self.sink = self.sink, QVideoSink(self.owner)
+        self.player.setVideoSink(self.sink)
+        old.deleteLater()
+        self._on_frame_fn = lambda f, g=g: self.owner._on_frame(self, f, g)
+        self._on_error_fn = lambda *_, g=g: g == self.gen and self.owner._finish(self, None)
+        self.sink.videoFrameChanged.connect(self._on_frame_fn, Qt.QueuedConnection)
+        self.player.errorOccurred.connect(self._on_error_fn)
 
 
 class VideoThumbnailer(QObject):
@@ -261,6 +286,7 @@ class VideoThumbnailer(QObject):
             self._pf_paused = True
             return False
         sl.cur, sl.frames, sl.wanted = item, 0, wanted
+        sl.arm()
         sl.dev = PhoneFile(self.device, item.path, item.size, self)
         if not sl.dev.open():
             self._finish(sl, None)
@@ -270,7 +296,9 @@ class VideoThumbnailer(QObject):
         sl.timer.start()
         return True
 
-    def _on_frame(self, sl, frame):
+    def _on_frame(self, sl, frame, gen=None):
+        if gen is not None and gen != sl.gen:
+            return                    # a late frame from the video this slot showed before
         if sl.cur is None or not frame.isValid():
             return
         sl.frames += 1
